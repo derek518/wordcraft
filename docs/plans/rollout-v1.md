@@ -84,7 +84,8 @@ Phase 0 (地基)  ──> Phase 1 (数据层) ──┬──> Phase 2 (FSRS 引
 - 全部时间处理走 `chrono`；UTC 存储 + 本地日归属（ADR-5）
 - 单文件 200–400 行上限，超出即拆
 - **测试断言**：跨本地午夜的两条 log 被分入不同 `date`
-- **DoD**：`grep -rn "86400\|86464\|SystemTime::now" src-tauri/src/` 除 chrono 内部外无手写日期运算
+- **DoD**：`db/clock.rs` 与 `db/repo/` 内零手写日期运算（`grep "86400\|86464\|SystemTime::now"` 无命中）
+- ⚠️ `db/legacy.rs` 的 2 处手写日期残留**不在本任务范围**——该文件随 command 全部切换后在 T10 整体删除（MOCKS.md M4）
 
 ### T08 · 排队算法 `get_session_queue` + 自适应控制
 - 实现 contracts §3.1 + §4.1 **三档自适应**（新词额度与强化配额随强化池大小 R 调整）

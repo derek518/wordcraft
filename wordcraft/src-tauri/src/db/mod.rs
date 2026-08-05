@@ -3,7 +3,9 @@
 //! 数据库仅 Rust 侧可访问（ADR-1）——前端一律通过 command 契约读写，
 //! 无法绕过校验直接操作 SQL。
 
+pub mod clock;
 pub mod migrations;
+pub mod repo;
 
 /// T07 将删除此模块。当前保留以维持 command 可用性。
 /// 其内部为 JSON 文件存储与手写日期运算，见 MOCKS.md M4。

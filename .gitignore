@@ -1,0 +1,24 @@
+# macOS
+.DS_Store
+
+# Node
+node_modules/
+dist/
+*.local
+
+# Rust / Tauri
+target/
+gen/schemas/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# 词库中间产物（原始素材不入库，仅提交清洗后结果与来源清单）
+scripts/wordlist/raw/
+scripts/cards/raw/

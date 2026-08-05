@@ -1,0 +1,124 @@
+@import "tailwindcss";
+
+@theme {
+  --color-wc-bg: #0f0f1a;
+  --color-wc-surface: #1a1a2e;
+  --color-wc-surface-2: #252542;
+  --color-wc-border: #333355;
+  --color-wc-primary: #7c3aed;
+  --color-wc-primary-bright: #a855f7;
+  --color-wc-accent: #06b6d4;
+  --color-wc-gold: #f59e0b;
+  --color-wc-success: #22c55e;
+  --color-wc-danger: #ef4444;
+  --color-wc-warning: #f97316;
+  --color-wc-text: #e2e8f0;
+  --color-wc-text-muted: #94a3b8;
+  --color-element-grass: #4ade80;
+  --color-element-water: #3b82f6;
+  --color-element-fire: #ef4444;
+  --color-element-thunder: #a855f7;
+  --color-element-ice: #67e8f9;
+  --color-element-rock: #a16207;
+  --font-pixel: 'Courier New', monospace;
+}
+
+body {
+  background-color: var(--color-wc-bg);
+  color: var(--color-wc-text);
+  font-family: system-ui, -apple-system, sans-serif;
+  overflow-x: hidden;
+}
+
+.pixel-border {
+  box-shadow: 
+    -2px 0 0 0 var(--color-wc-border),
+    2px 0 0 0 var(--color-wc-border),
+    0 -2px 0 0 var(--color-wc-border),
+    0 2px 0 0 var(--color-wc-border);
+}
+
+@keyframes float-up {
+  0% { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-60px) scale(1.3); }
+}
+
+.float-text {
+  animation: float-up 1s ease-out forwards;
+  position: absolute;
+  pointer-events: none;
+  font-weight: bold;
+  z-index: 100;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 5px var(--color-wc-primary); }
+  50% { box-shadow: 0 0 20px var(--color-wc-primary-bright); }
+}
+
+.glow-pulse {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-8px); }
+  75% { transform: translateX(8px); }
+}
+
+.shake {
+  animation: shake 0.4s ease-in-out;
+}
+
+@keyframes pop-in {
+  0% { transform: scale(0.8); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.pop-in {
+  animation: pop-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.crystal-card {
+  transition: all 0.3s ease;
+}
+
+.crystal-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 20px rgba(124, 58, 237, 0.3);
+}
+
+.portal-btn {
+  position: relative;
+  overflow: hidden;
+}
+
+.portal-btn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+  transition: left 0.5s;
+}
+
+.portal-btn:hover::before {
+  left: 100%;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-wc-bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-wc-border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-wc-primary);
+}

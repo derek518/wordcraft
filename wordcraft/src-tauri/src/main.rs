@@ -7,6 +7,9 @@ mod scheduler;
 mod tts;
 mod fsrs_engine;
 
+#[cfg(test)]
+mod test_support;
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -14,7 +17,7 @@ fn main() {
         .plugin(tauri_plugin_log::Builder::new().build())
         .setup(|app| {
             let app_handle = app.handle();
-            if let Err(e) = db::init_database(&app_handle) {
+            if let Err(e) = db::init_database(app_handle) {
                 eprintln!("Database init error: {}", e);
             }
             scheduler::start_scheduler(app_handle.clone());

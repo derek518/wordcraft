@@ -17,7 +17,7 @@ pub fn get_next_review_words(
     app: AppHandle,
     count: i64,
 ) -> Result<Vec<WordReview>, String> {
-    use crate::db::*;
+    use crate::db::legacy::*;
     
     let words = get_due_words(app, count, "review".to_string())?;
     
@@ -45,7 +45,7 @@ pub fn submit_review_result(
     rating: i32,
     reaction_ms: i64,
 ) -> Result<serde_json::Value, String> {
-    use crate::db::*;
+    use crate::db::legacy::*;
     
     let result = match rating {
         4 => 3,

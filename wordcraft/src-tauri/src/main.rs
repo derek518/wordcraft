@@ -2,6 +2,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 
+use tauri::Manager;
+
 mod db;
 mod scheduler;
 mod tts;
@@ -17,20 +19,24 @@ fn main() {
         .plugin(tauri_plugin_log::Builder::new().build())
         .setup(|app| {
             let app_handle = app.handle();
-            if let Err(e) = db::init_database(app_handle) {
-                eprintln!("Database init error: {}", e);
-            }
+
+            // 数据库不可用时应用没有任何意义，故此处失败即终止启动，
+            // 不降级、不静默继续 —— 那正是审计 D6 的失效模式。
+            let database = db::init(app_handle)?;
+            app.manage(database);
+
             scheduler::start_scheduler(app_handle.clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            db::get_due_words,
-            db::update_word_review,
-            db::get_today_stats,
-            db::get_overall_stats,
-            db::get_setting,
-            db::set_setting,
-            db::import_word_library,
+            // TODO(T07): 以下 legacy command 由 SQLite Repository 实现替换，见 MOCKS.md M4
+            db::legacy::get_due_words,
+            db::legacy::update_word_review,
+            db::legacy::get_today_stats,
+            db::legacy::get_overall_stats,
+            db::legacy::get_setting,
+            db::legacy::set_setting,
+            db::legacy::import_word_library,
             tts::play_word_audio,
             fsrs_engine::get_next_review_words,
             fsrs_engine::submit_review_result,

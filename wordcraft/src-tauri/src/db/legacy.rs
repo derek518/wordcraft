@@ -88,17 +88,7 @@ fn save_data(app: &AppHandle, data: &AppData) -> Result<(), String> {
     fs::write(&path, content).map_err(|e| e.to_string())
 }
 
-pub fn init_database(app: &AppHandle) -> Result<(), String> {
-    let mut data = load_data(app)?;
-    
-    if data.settings.is_empty() {
-        data.settings.insert("first_run".to_string(), "true".to_string());
-        data.settings.insert("sound_enabled".to_string(), "true".to_string());
-        save_data(app, &data)?;
-    }
-    
-    Ok(())
-}
+// init_database 已删除：settings 的初始化自 T06 起由 SQLite migration 001 负责。
 
 #[tauri::command]
 pub fn get_due_words(app: AppHandle, limit: i64, _session_type: String) -> Result<Vec<Word>, String> {

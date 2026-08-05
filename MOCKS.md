@@ -16,11 +16,20 @@
 | M1 | `src-tauri/src/scheduler.rs` | `start_scheduler` 仅 `sleep(60)` 死循环；`get_next_session_time` 硬编码返回 `"09:00"`/60 分钟；`trigger_popup_now` 直接 `Ok(())` | **T25** | 待清除 |
 | M2 | `src-tauri/src/tts.rs` | `play_word_audio` 创建目录后直接 `Ok(())`，从不发声 | **T19** | 待清除 |
 | M3 | `src-tauri/src/fsrs_engine.rs` | 未使用任何 FSRS 库；`generate_options` 返回硬编码 `"选项A/B/C/D"` | **T11**（整文件删除） | 待清除 |
-| M4 | `src-tauri/src/db.rs` | JSON 文件存储替代 SQLite；手写日期函数（`86464` typo，85% 日期算错）；`add_days` 忽略天数参数 | **T06/T07** | 待清除 |
+| M4 | `src-tauri/src/db/legacy.rs` | JSON 文件存储替代 SQLite；手写日期函数（`86464` typo，85% 日期算错）；`add_days` 忽略天数参数 | **T07** | ⏳ 部分 — 见下 |
 | M5 | `src/components/WordTrainer.tsx:86` | 50 个硬编码中文释义数组充当干扰项 | **T20** | 待清除 |
 | M6 | `src/components/WordTrainer.tsx:64` | `catch` 中静默 fallback 到本地 `words.ts` 假数据，掩盖后端故障 | **T21** | 待清除 |
 | M7 | `src/components/AdventureMap.tsx:27` | `completedToday` 是永远为空的 `useState`，传送门完成状态是假的 | **T21** | 待清除 |
 | M8 | `src/data/words.ts` | 52 词硬编码词库，且 100% 以字母 a 开头（字典序前 52 个，非按词频） | **T18** | 待清除 |
+
+#### M4 进展（T06 完成时）
+
+- ✅ SQLite schema 已建立并接入启动流程（`db::init` 在 `main.rs` setup 中执行，失败即终止启动）
+- ✅ 遗留 JSON 已归档（带标记防重复归档），其数据不迁移——时间戳由缺陷日期函数生成，不可信
+- ⏳ **7 个 command 仍走 `db::legacy`**（`main.rs` 中以 `// TODO(T07)` 标记），JSON 存储与手写日期函数随之存活
+- ⏳ `db::legacy::init_database` 已删除（settings 初始化改由 migration 001 负责）
+
+**M4 完全清除的判据**：`src-tauri/src/db/legacy.rs` 文件不存在，且 `main.rs` 的 `generate_handler!` 中无 `db::legacy::` 路径。
 
 ### 🟡 计划内 stub（尚未引入，T23 建立）
 

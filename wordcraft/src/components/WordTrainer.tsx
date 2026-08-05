@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 
 interface WordTrainerProps {
@@ -45,15 +45,32 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
   
   const cardRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    loadWords()
+  const generateOptions = useCallback((word: WordItem) => {
+    // Simple distractor generation - in production this would use the database
+    const allMeanings = [
+      '能力，才能', '能够的', '关于', '在……上面', '接受',
+      '事故', '达到', '横过', '行动', '活跃的',
+      '活动', '实际上', '添加', '地址', '钦佩',
+      '成年人', '前进', '优势', '冒险', '广告',
+      '建议', '买得起', '害怕的', '在……之后', '下午',
+      '再一次', '反对', '年龄', '以前', '同意',
+      '空气', '机场', '活着的', '全部', '允许',
+      '几乎', '独自', '沿着', '已经', '也',
+      '虽然', '总是', '使惊奇', '在……之中', '数量',
+      '古代的', '生气的', '动物', '宣布', '另一个',
+    ]
+
+    const otherMeanings = allMeanings.filter(m => m !== word.meaning)
+    const shuffled = otherMeanings.sort(() => Math.random() - 0.5).slice(0, 3)
+    const opts = [...shuffled, word.meaning].sort(() => Math.random() - 0.5)
+    setOptions(opts)
   }, [])
 
-  const loadWords = async () => {
+  const loadWords = useCallback(async () => {
     try {
-      const result = await invoke<WordItem[]>('get_due_words', { 
-        limit: sessionType === 'free' ? 10 : 5, 
-        sessionType 
+      const result = await invoke<WordItem[]>('get_due_words', {
+        limit: sessionType === 'free' ? 10 : 5,
+        sessionType
       })
       setWords(result)
       if (result.length > 0) {
@@ -79,28 +96,11 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
         setStartTime(Date.now())
       }
     }
-  }
+  }, [sessionType, generateOptions])
 
-  const generateOptions = (word: WordItem) => {
-    // Simple distractor generation - in production this would use the database
-    const allMeanings = [
-      '能力，才能', '能够的', '关于', '在……上面', '接受',
-      '事故', '达到', '横过', '行动', '活跃的',
-      '活动', '实际上', '添加', '地址', '钦佩',
-      '成年人', '前进', '优势', '冒险', '广告',
-      '建议', '买得起', '害怕的', '在……之后', '下午',
-      '再一次', '反对', '年龄', '以前', '同意',
-      '空气', '机场', '活着的', '全部', '允许',
-      '几乎', '独自', '沿着', '已经', '也',
-      '虽然', '总是', '使惊奇', '在……之中', '数量',
-      '古代的', '生气的', '动物', '宣布', '另一个',
-    ]
-    
-    const otherMeanings = allMeanings.filter(m => m !== word.meaning)
-    const shuffled = otherMeanings.sort(() => Math.random() - 0.5).slice(0, 3)
-    const opts = [...shuffled, word.meaning].sort(() => Math.random() - 0.5)
-    setOptions(opts)
-  }
+  useEffect(() => {
+    loadWords()
+  }, [loadWords])
 
   const handleSelect = async (option: string) => {
     if (isRevealed) return

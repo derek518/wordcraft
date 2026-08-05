@@ -198,7 +198,7 @@ pub fn get_overall_stats(app: AppHandle) -> Result<serde_json::Value, String> {
     let data = load_data(&app)?;
     
     let total_words = data.words.len() as i64;
-    let new_words = data.word_states.iter().filter(|s| s.state == "new" || s.state == "").count() as i64;
+    let new_words = data.word_states.iter().filter(|s| s.state == "new" || s.state.is_empty()).count() as i64;
     let learning = data.word_states.iter().filter(|s| s.state == "learning" || s.state == "relearning").count() as i64;
     let review = data.word_states.iter().filter(|s| s.state == "review").count() as i64;
     let mastered = data.word_states.iter().filter(|s| s.state == "mastered").count() as i64;

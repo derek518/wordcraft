@@ -6,7 +6,7 @@ WordCraft Asset Generator
 import os
 from PIL import Image, ImageDraw
 
-OUTPUT_DIR = "/Users/derek/Codes/高考英语/wordcraft/public/assets"
+OUTPUT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def ensure_dirs():
     for subdir in ["crystals", "portals", "blocks", "badges", "ui", "effects"]:

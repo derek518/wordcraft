@@ -733,10 +733,25 @@ mod tests {
                 s.due_at = clock::due_in_days(1.0);
             }
         } else {
-            s.app_state = "review".into();
             s.stability = grow_stability(s.stability);
             s.question_level = (s.question_level + 1).min(5);
             s.due_at = clock::due_in_days(s.stability);
+
+            // 掌握判定必须与前端 stateMachine.ts 一致：稳定性超过 60 天
+            // 且通过高阶题型。此处若缺这一分支，模拟里永远不会出现已掌握词，
+            // 「已掌握占比」之类的结论便完全失真
+            const MASTERY_STABILITY_DAYS: f64 = 60.0;
+            const MASTERY_MIN_QUESTION_LEVEL: i64 = 4;
+            if s.stability > MASTERY_STABILITY_DAYS
+                && item.question_level >= MASTERY_MIN_QUESTION_LEVEL
+            {
+                s.app_state = "mastered".into();
+                if s.mastered_at.is_none() {
+                    s.mastered_at = Some(clock::now());
+                }
+            } else if s.app_state != "mastered" {
+                s.app_state = "review".into();
+            }
         }
 
         word_states::upsert(conn, &s).unwrap();
@@ -819,6 +834,86 @@ mod tests {
             r.peak_pool < 80,
             "强化池峰值过高（{}），自适应控制未生效",
             r.peak_pool
+        );
+    }
+
+    /// 已掌握词会不会挤占日常练习。
+    ///
+    /// 担忧是合理的：`mastered` 词并非彻底离场，而是进入低频抽查（spec F2）。
+    /// 词库 3657 词若最终大半进入该状态，即便每词 60 天才到期一次，
+    /// 每天的抽查量也可能压过新词与复习。
+    ///
+    /// 本测试跑满两年学习周期，统计稳态下各来源的实际占比。
+    #[test]
+    fn 已掌握词不会挤占日常练习() {
+        let conn = seed(3657);
+        let mut rng = Lcg(0xC0FF_EE01);
+
+        let (mut n_new, mut n_due, mut n_reinforce, mut n_probe) = (0usize, 0usize, 0usize, 0usize);
+        // 只统计后半程——前期几乎没有已掌握词，会稀释稳态占比。
+        // 按 app_state 而非 source 统计：已掌握词到期后走的是 DueReview 来源，
+        // 与普通复习词混在一起，只有看状态才分得出
+        let (mut late_mastered, mut late_total) = (0usize, 0usize);
+
+        for day in 0..730 {
+            for _ in 0..3 {
+                let q = build(&conn, "free", 20).unwrap();
+                for item in &q {
+                    match item.source {
+                        QueueSource::New => n_new += 1,
+                        QueueSource::DueReview => n_due += 1,
+                        QueueSource::Reinforcing => n_reinforce += 1,
+                        QueueSource::PlacementProbe => n_probe += 1,
+                    }
+                    if day >= 365 {
+                        late_total += 1;
+                        if item.app_state == "mastered" {
+                            late_mastered += 1;
+                        }
+                    }
+
+                    let p = match item.source {
+                        QueueSource::New => 0.65,
+                        QueueSource::Reinforcing => 0.80,
+                        _ => 0.88,
+                    };
+                    let correct = rng.next_f64() < p;
+                    let fast = rng.next_f64() < 0.85;
+                    apply_transition(&conn, item, correct, fast);
+                }
+            }
+            conn.execute(
+                "UPDATE word_states SET due_at = strftime('%Y-%m-%dT%H:%M:%SZ', due_at, '-1 day')",
+                [],
+            )
+            .unwrap();
+        }
+
+        let mastered = word_states::count_by_app_state(&conn, "mastered").unwrap();
+        let learned = word_states::count_by_app_state(&conn, "review").unwrap() + mastered;
+        let total = n_new + n_due + n_reinforce + n_probe;
+
+        println!("\n─── 两年模拟（3657 词库，每天 3 场 × 20 词）───");
+        println!("累计词次 {total}");
+        println!("  新词      {n_new:>7}  {:>5.1}%", n_new as f64 / total as f64 * 100.0);
+        println!("  到期复习  {n_due:>7}  {:>5.1}%", n_due as f64 / total as f64 * 100.0);
+        println!("  强化      {n_reinforce:>7}  {:>5.1}%", n_reinforce as f64 / total as f64 * 100.0);
+        println!("  抽查      {n_probe:>7}  {:>5.1}%", n_probe as f64 / total as f64 * 100.0);
+        println!("学过 {learned} 词，其中已掌握 {mastered}");
+
+        let mastered_ratio = late_mastered as f64 / late_total.max(1) as f64;
+        println!(
+            "第二年出题中已掌握词占比 {:.1}%（{late_mastered}/{late_total}）",
+            mastered_ratio * 100.0
+        );
+
+        // 已掌握词的到期间隔以月计，即便积累到数千词，每天到期的也只是其中一小部分。
+        // 占比失控意味着掌握判定的稳定性门槛或 FSRS 间隔设置出了问题——
+        // 学习者会感到"一直在复习已经会了的词"
+        assert!(
+            mastered_ratio < 0.5,
+            "第二年出题中已掌握词占 {:.1}%，正在挤占新词与复习",
+            mastered_ratio * 100.0
         );
     }
 

@@ -18,13 +18,15 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 API_BASE = "https://api.deepseek.com"
-DEFAULT_MODEL = "deepseek-chat"
+DEFAULT_MODEL = "deepseek-v4-flash"
 
 WORDS_PATH = Path("scripts/wordlist/words.json")
 OUTPUT_PATH = Path("scripts/wordlist/examples.json")
@@ -61,9 +63,15 @@ def load_done() -> dict[str, dict]:
 
 
 def save_done(done: dict[str, dict]) -> None:
-    OUTPUT_PATH.write_text(
-        json.dumps(done, ensure_ascii=False, indent=1), encoding="utf-8"
-    )
+    """原子写盘：先写临时文件再 rename。
+
+    直接覆盖写有风险——若在 json.dump 中途被杀，文件就是半截 JSON，
+    下次启动解析失败，已完成的几千词进度全丢，比不做断点续传更糟。
+    POSIX 保证 rename 原子，读到的要么是旧版本要么是新版本。
+    """
+    tmp = OUTPUT_PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps(done, ensure_ascii=False, indent=1), encoding="utf-8")
+    os.replace(tmp, OUTPUT_PATH)
 
 
 def api_key() -> str:
@@ -143,9 +151,31 @@ def generate_batch(batch: list[dict], model: str, key: str) -> dict[str, dict]:
         "messages": [{"role": "user", "content": PROMPT + "\n" + listing}],
         "temperature": 1.0,
         "max_tokens": 4000,
+        # deepseek-v4-flash 默认开启推理，且思考与输出共用 max_tokens 预算。
+        # 实测有批次把 8000 tokens 全花在 reasoning 上、输出一个字都没剩，
+        # 报错还伪装成「未找到 JSON 数组」。
+        #
+        # 生成例句是模板化产出——约束明确、无需权衡，推理纯属浪费。关闭后
+        # reasoning_tokens 归零，既不会截断也更省。
+        #
+        # 注意参数名必须准确：`enable_thinking: false` 会被静默忽略（实测
+        # reasoning 仍有 478 tokens），API 不会为未知字段报错。
+        "thinking": {"type": "disabled"},
     }
     result = request("/chat/completions", payload, key)
-    content = result["choices"][0]["message"]["content"]
+    choice = result["choices"][0]
+
+    # 先看 finish_reason 再解析——token 耗尽时的报错必须指向真实原因，
+    # 否则排查会被「JSON 解析失败」带偏
+    if choice.get("finish_reason") == "length":
+        usage = result.get("usage", {})
+        reasoning = usage.get("completion_tokens_details", {}).get("reasoning_tokens", 0)
+        raise ValueError(
+            f"输出被 max_tokens 截断（completion={usage.get('completion_tokens')}, "
+            f"其中 reasoning={reasoning}），请减小 --batch-size"
+        )
+
+    content = choice["message"]["content"]
 
     out: dict[str, dict] = {}
     wanted = {w["word"] for w in batch}
@@ -163,11 +193,62 @@ def generate_batch(batch: list[dict], model: str, key: str) -> dict[str, dict]:
     return out
 
 
+def run_round(
+    pending: list[dict],
+    args: argparse.Namespace,
+    key: str,
+    done: dict[str, dict],
+    lock: threading.Lock,
+) -> list[dict]:
+    """并发跑完一轮，返回失败待重试的词。"""
+    batches = [
+        pending[i : i + args.batch_size]
+        for i in range(0, len(pending), args.batch_size)
+    ]
+    failed: list[dict] = []
+    completed = 0
+
+    def work(batch: list[dict]) -> tuple[list[dict], dict[str, dict]]:
+        try:
+            return [], generate_batch(batch, args.model, key)
+        except urllib.error.HTTPError as e:
+            body = e.read().decode()[:120]
+            # 限流要退避，否则并发只会把 429 打得更密
+            time.sleep(20 if e.code == 429 else 5)
+            print(f"    HTTP {e.code}: {body}")
+            return batch, {}
+        except Exception as e:  # noqa: BLE001 - 网络与解析错误都要能续跑
+            time.sleep(3)
+            print(f"    {type(e).__name__}: {e}")
+            return batch, {}
+
+    with ThreadPoolExecutor(max_workers=args.concurrency) as pool:
+        futures = {pool.submit(work, b): b for b in batches}
+        for fut in as_completed(futures):
+            batch = futures[fut]
+            bad, got = fut.result()
+
+            # 锁同时保护 dict 更新与落盘：两者必须一致，
+            # 否则崩溃时磁盘上的进度可能落后于内存
+            with lock:
+                done.update(got)
+                save_done(done)
+                completed += 1
+                total = len(done)
+
+            failed.extend(bad)
+            failed.extend(w for w in batch if w["word"] not in got and w not in bad)
+            print(f"  [{completed:>3}/{len(batches)}] +{len(got):>2}/{len(batch)}  累计 {total:,}")
+
+    return failed
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--zone", nargs="*", help="只生成指定分区")
     ap.add_argument("--batch-size", type=int, default=20)
+    ap.add_argument("--concurrency", type=int, default=6, help="并发请求数")
     ap.add_argument("--list-models", action="store_true")
     ap.add_argument("--max-rounds", type=int, default=3, help="失败词的重试轮数")
     args = ap.parse_args()
@@ -180,48 +261,26 @@ def main() -> int:
 
     words = load_words(args.zone)
     done = load_done()
+    lock = threading.Lock()
 
     pending = [w for w in words if w["word"] not in done]
     print(f"目标 {len(words):,} 词，已完成 {len(words) - len(pending):,}，待生成 {len(pending):,}")
+    print(f"模型 {args.model}，每批 {args.batch_size} 词，并发 {args.concurrency}")
     if not pending:
         print("无待生成词条。")
         return 0
 
+    started = time.time()
     for round_no in range(1, args.max_rounds + 1):
         if not pending:
             break
         print(f"\n─── 第 {round_no} 轮，{len(pending):,} 词 ───")
-        failed: list[dict] = []
+        pending = run_round(pending, args, key, done, lock)
 
-        for i in range(0, len(pending), args.batch_size):
-            batch = pending[i : i + args.batch_size]
-            try:
-                got = generate_batch(batch, args.model, key)
-            except urllib.error.HTTPError as e:
-                body = e.read().decode()[:200]
-                print(f"  [{i:>5}] HTTP {e.code}: {body}")
-                failed.extend(batch)
-                # 限流时退避，其余错误也稍等，避免打爆对端
-                time.sleep(20 if e.code == 429 else 5)
-                continue
-            except Exception as e:  # noqa: BLE001 - 网络与解析错误都要能续跑
-                print(f"  [{i:>5}] {type(e).__name__}: {e}")
-                failed.extend(batch)
-                time.sleep(5)
-                continue
-
-            done.update(got)
-            save_done(done)  # 每批落盘，中断不丢进度
-
-            missing = [w for w in batch if w["word"] not in got]
-            failed.extend(missing)
-            print(f"  [{i:>5}] +{len(got):>2}/{len(batch)}  累计 {len(done):,}")
-
-        pending = failed
-
+    elapsed = time.time() - started
     if pending:
         print(f"\n仍有 {len(pending)} 词未生成：{', '.join(w['word'] for w in pending[:20])}")
-    print(f"\n完成 {len(done):,} 词 → {OUTPUT_PATH}")
+    print(f"\n完成 {len(done):,} 词，耗时 {elapsed/60:.1f} 分钟 → {OUTPUT_PATH}")
     return 0
 
 

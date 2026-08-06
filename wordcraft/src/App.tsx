@@ -15,6 +15,7 @@ export default function App() {
   const [stats, setStats] = useState<OverallStats | null>(null)
   const [showWelcome, setShowWelcome] = useState(false)
   const [bootError, setBootError] = useState('')
+  const [importing, setImporting] = useState(false)
 
   const loadStats = useCallback(async () => {
     try {
@@ -25,29 +26,22 @@ export default function App() {
   }, [])
 
   /**
-   * 首次启动：导入内置词库。
+   * 首次启动：导入内置词库（3,657 词考纲词汇）。
    *
-   * TODO(T18): `src/data/words.ts` 是 52 词的占位词库（见 MOCKS.md M8），
-   * 由真实的人教版 + 外研版融合词库替换。
+   * 词库走 fetch 而非 import：1MB 数据只在首启用一次，打进 JS bundle
+   * 会长期占内存。文件在 public/ 下，由 scripts/wordlist/build_library.py 生成。
    */
   const bootstrap = useCallback(async () => {
     try {
       const done = await api.getSetting('onboarding_done')
       if (done === 'true') return
 
-      const { newbieZoneWords } = await import('./data/words')
-      const payload = newbieZoneWords.map((w) => ({
-        word: w.word,
-        phonetic: w.phonetic,
-        pos: w.pos,
-        meaning: w.meaning,
-        example_1: w.example_1,
-        example_2: w.example_2,
-        level: w.level,
-        frequency_band: w.frequency_band,
-        zone: 'newbie',
-        source_edition: '',
-      }))
+      setImporting(true)
+      const res = await fetch('/library.json')
+      if (!res.ok) {
+        throw new Error(`词库文件读取失败（HTTP ${res.status}）`)
+      }
+      const payload: api.WordImport[] = await res.json()
 
       const outcome = await api.importWords(payload)
       if (outcome.rejected.length > 0) {
@@ -59,6 +53,8 @@ export default function App() {
       setShowWelcome(true)
     } catch (e) {
       setBootError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setImporting(false)
     }
   }, [])
 
@@ -113,6 +109,13 @@ export default function App() {
         <div className="mx-4 mt-4 p-3 rounded-lg bg-wc-danger/10 border border-wc-danger/30 text-sm">
           <span className="font-bold text-wc-danger">数据加载失败：</span>
           <span className="text-wc-text-muted ml-1 break-words">{bootError}</span>
+        </div>
+      )}
+
+      {importing && (
+        <div className="mx-4 mt-4 p-3 rounded-lg bg-wc-surface border border-wc-border text-sm flex items-center gap-2">
+          <span className="animate-pulse">⚡</span>
+          正在导入词库（3,657 词），首次启动需要几秒…
         </div>
       )}
 

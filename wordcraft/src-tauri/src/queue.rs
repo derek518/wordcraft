@@ -17,8 +17,14 @@ use tauri::State;
 /// 合法的会话类型。前端传入值必须在此集合内。
 const VALID_SESSION_TYPES: [&str; 4] = ["morning", "noon", "evening", "free"];
 
-/// spec F1：合并后的单次弹窗词量上限。
-pub const MERGED_LIMIT: i64 = 8;
+/// 合并后的单次弹窗词量上限。
+///
+/// spec F1 原值为 8，那是基于「每场 3-5 词」设定的。单场提到 20 词后（决议 S13）
+/// 该上限失去意义，改为 30——留出 10 词余量吸收上一时段的未完成部分。
+pub const MERGED_LIMIT: i64 = 30;
+
+/// 单场词量缺省值。前端不传 limit 时从 settings 读取，缺键才用此值。
+const DEFAULT_SESSION_WORDS: i64 = 20;
 
 /// 自适应阈值。R 为强化池大小。
 const RELAXED_MAX: i64 = 15;
@@ -308,26 +314,33 @@ pub fn build(
 
 /// contracts §3.1：返回本次会话的词队列。
 ///
-/// 校验在边界处完成——非法 `session_type` 立即拒绝，不静默降级为默认值。
+/// `limit` 省略时从 `settings.session_word_count` 读取——单场词量是产品参数
+/// （决议 S13 定为 20），前端不应硬编码。
+///
+/// 校验在边界处完成：非法 `session_type` 立即拒绝，不静默降级为默认值。
 #[tauri::command]
 pub fn get_session_queue(
     db: State<Db>,
     session_type: String,
-    limit: i64,
+    limit: Option<i64>,
 ) -> Result<Vec<QueueItem>, String> {
     if !VALID_SESSION_TYPES.contains(&session_type.as_str()) {
         return Err(format!(
             "非法的 session_type `{session_type}`，应为 {VALID_SESSION_TYPES:?} 之一"
         ));
     }
-    if limit <= 0 {
-        return Err(format!("limit 必须为正数，收到 {limit}"));
-    }
 
     let conn = db
         .0
         .lock()
         .map_err(|e| format!("获取数据库锁失败: {e}"))?;
+
+    let limit = match limit {
+        Some(n) if n > 0 => n,
+        Some(n) => return Err(format!("limit 必须为正数，收到 {n}")),
+        None => settings::get_int(&conn, "session_word_count", DEFAULT_SESSION_WORDS)?,
+    };
+
     build(&conn, &session_type, limit)
 }
 
@@ -578,16 +591,29 @@ mod tests {
     // ── 时段合并（spec F1） ──────────────────────────
 
     #[test]
-    fn 上一时段未完成则合并且封顶八词() {
+    fn 上一时段未完成则合并() {
         let conn = seed(30);
         let d = clock::today();
 
         let s = sessions::start(&conn, &d, "morning", 5, &clock::now()).unwrap();
-        assert_eq!(effective_limit(&conn, &d, "noon", 5).unwrap(), 10.min(MERGED_LIMIT));
+        assert_eq!(effective_limit(&conn, &d, "noon", 5).unwrap(), 10);
 
         // 完成 morning 后不再合并
         sessions::finish(&conn, s.id, 5, 50, &clock::now()).unwrap();
         assert_eq!(effective_limit(&conn, &d, "noon", 5).unwrap(), 5);
+    }
+
+    #[test]
+    fn 合并量封顶在_merged_limit() {
+        let conn = seed(60);
+        let d = clock::today();
+
+        // 上一时段计划 20 词一个没做，本时段也是 20 词 → 40，应被截到 30
+        sessions::start(&conn, &d, "morning", 20, &clock::now()).unwrap();
+        assert_eq!(
+            effective_limit(&conn, &d, "noon", 20).unwrap(),
+            MERGED_LIMIT
+        );
     }
 
     #[test]

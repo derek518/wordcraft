@@ -151,6 +151,7 @@ CREATE TABLE settings (
 | `daily_new_words` | `"6"` | spec §7.2；**运行时受 §4.1 自适应调制**，此为上限而非定值。T15 验证真实词表规模后可能下调至 4 |
 | `placement_stage` | `"0"` | 摸底进度：0=未开始 1=进行中 2=已完成（支持分两次） |
 | `daily_pause_date` | `""` | 今日暂停激活的日期，空串表示未激活 |
+| `session_word_count` | `"20"` | 单场词量（migration 002，决议 S13）。**前端不得硬编码**，`get_session_queue` 省略 `limit` 时由后端读取 |
 | `sound_enabled` | `"true"` | |
 | `autostart_enabled` | `"true"` | |
 | `tts_provider` | `"edge"` | `edge` \| `sapi` \| `off` |
@@ -165,9 +166,10 @@ CREATE TABLE settings (
 ### 3.1 词库 / 排队
 
 ```rust
-/// 按 spec F2 排队规则返回本次 session 的词。强化词占比 ≥40%。
-/// 排队优先级：强化中(app_state='reinforcing') > 到期复习(due_at<=now) > 新词(受 daily_new_words 限额)
-get_session_queue(session_type: String, limit: i64) -> Result<Vec<QueueItem>, String>
+/// 按 §4.1 自适应配额返回本次 session 的词。
+/// 排队优先级：强化中 > 到期复习(due_at<=now) > 摸底抽查 > 新词(受 daily_new_words 限额)
+/// limit 省略时读 settings.session_word_count（默认 20，决议 S13）
+get_session_queue(session_type: String, limit: Option<i64>) -> Result<Vec<QueueItem>, String>
 
 /// 返回指定词的干扰项候选池（同词性、编辑距离近的词），由前端组题。
 get_distractor_pool(word_id: i64, pos: String, count: i64) -> Result<Vec<String>, String>
@@ -443,8 +445,39 @@ interface WordImportDto {
 ```
 730 天 − 90 天末尾巩固期（末批词达 mastered 需 2-3 月）= 有效学习期 640 天
 摸底判掉约 960 词（初中 1600 词掌握率 ~60%）
-(4800 − 960) ÷ 640 = 6.0 新词/天        ✅ 与 settings.daily_new_words 默认值一致
+待学 4800 − 960 = 3840 词
 ```
+
+**新词吞吐受复习开销约束（决议 S13，T08 实测）**
+
+```
+新词吞吐/天 ≈ 总词次/天 ÷ 9.3
+  └ 每学 1 新词产生约 4.7 复习词次 + 3.6 强化词次
+
+3 场 × 20 词 = 60 词次/天 → 实测 5.78 新词/天
+640 天 × 5.78 = 3699 词    达成 3840 目标的 96%
+```
+
+> ⚠️ 早期版本按「3840 ÷ 640 = 6.0 新词/天」推算，**未计入复习开销**，据此得出的
+> 「每场 3–5 词即可」是错的——实测只有 1.62 新词/天。
+>
+> 此时瓶颈已从排队槽位转移到 `daily_new_words = 6` 本身，继续加大单场词量收益递减。
+>
+> **9.3 这个系数基于简化 stability 模型（首次 3 天、后续 ×2.5）**。T11 接上 `ts-fsrs`
+> 后必须用真算法重测；偏差超 ±20% 则回头修订 S13。
+
+### 9.1.1 会话容量契约
+
+| 项 | 值 | 来源 |
+|---|---|---|
+| 单场词量 `base_limit` | **20** | 决议 S13（spec §3.1 原为 3–5） |
+| 单场时长上限 | **≤240 秒** | 决议 S13（spec §1.3 原为 ≤120 秒） |
+| 合并上限 `MERGED_LIMIT` | **30** | 决议 S13（spec F1 原为 8，基于旧的 3–5 词设定） |
+| 时段数 | 3（维持不变） | spec F1 |
+
+**中断容忍（S13 配套要求）**：单场延长至约 4 分钟后，中途退出不再是边缘场景。
+会话必须支持**随时退出并保留已完成部分**——已 `commit_review` 的词不得回滚，
+未作答的词留在队列中由下次会话重新排入。
 
 **T15 强制验证项**：spec 假设「中考 1600 + 高考 3500」去重后仍为 5100，但国内高考考纲 3500 词表**通常已包含**中考 1600 词。拿到真实词表后立即执行 `SELECT COUNT(DISTINCT word)`，若实际仅 3500–3800，`daily_new_words` 默认值下调至 4。
 

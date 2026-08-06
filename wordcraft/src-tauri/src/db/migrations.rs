@@ -16,11 +16,18 @@ struct Migration {
 }
 
 /// 新增迁移时在此追加，version 必须严格递增。
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "initial",
-    sql: include_str!("migrations/001_initial.sql"),
-}];
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "initial",
+        sql: include_str!("migrations/001_initial.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "session_capacity",
+        sql: include_str!("migrations/002_session_capacity.sql"),
+    },
+];
 
 /// 执行所有未应用的迁移，返回本次实际应用的版本号。
 ///
@@ -219,7 +226,7 @@ mod tests {
         let mut conn = in_memory_db();
 
         let first = run(&mut conn).expect("首次迁移失败");
-        assert_eq!(first, vec![1], "首次应用 migration 001");
+        assert_eq!(first, vec![1, 2], "首次应用全部迁移");
 
         let second = run(&mut conn).expect("重复迁移失败");
         assert!(second.is_empty(), "重复执行不应再应用任何迁移");
@@ -227,11 +234,11 @@ mod tests {
         let third = run(&mut conn).expect("第三次迁移失败");
         assert!(third.is_empty());
 
-        // 数据未被重置
+        // 数据未被重置：001 插 9 个键，002 追加 session_word_count
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM settings", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(count, 9, "settings 默认值被重复插入或丢失");
+        assert_eq!(count, 10, "settings 默认值被重复插入或丢失");
     }
 
     #[test]

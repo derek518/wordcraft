@@ -100,6 +100,24 @@ pub fn start_scheduler(app: AppHandle) {
                 continue;
             }
 
+            // 全屏游戏 / 演示中不打扰（spec F1）。
+            //
+            // 关键在于**不标记 eligible**：这个时段用户从未获得机会，
+            // 计入 streak 分母等于惩罚他没做一件根本没被提示的事（决议 S6）。
+            // 也不写 fired——等他退出全屏后，本时段仍可正常弹出
+            match crate::platform::integration().user_busy_state() {
+                Ok(state) if state.should_suppress() => {
+                    log::info!("时段 {} 到达但用户处于 {state:?}，本轮跳过", next.session_type);
+                    continue;
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    // 查不到状态时照常弹：宁可打扰一次，也不要因为检测故障
+                    // 让整个提醒功能静默失效
+                    log::warn!("查询用户状态失败，按可打扰处理: {e}");
+                }
+            }
+
             log::info!("时段 {} 到达，弹出训练窗口", next.session_type);
             if let Err(e) = show_popup(&app) {
                 log::warn!("弹出训练窗口失败: {e}");

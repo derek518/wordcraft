@@ -7,10 +7,12 @@ use tauri::Manager;
 mod commands;
 mod db;
 mod placement;
+mod platform;
 mod progression;
 mod queue;
 mod review;
 mod scheduler;
+mod tray;
 mod tts;
 
 #[cfg(test)]
@@ -20,6 +22,10 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .plugin(tauri_plugin_log::Builder::new().build())
         .setup(|app| {
             let app_handle = app.handle();
@@ -30,6 +36,7 @@ fn main() {
             progression::run_daily_rollover(&database)?;
             app.manage(database);
 
+            tray::build(app_handle)?;
             scheduler::start_scheduler(app_handle.clone());
             Ok(())
         })
@@ -54,6 +61,8 @@ fn main() {
             placement::get_placement_question,
             placement::submit_placement_answer,
             placement::finalize_placement,
+            // 平台能力
+            platform::get_user_busy_state,
             // 统计
             commands::stats::get_today_stats,
             commands::stats::get_overall_stats,

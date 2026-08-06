@@ -77,11 +77,21 @@ Windows 走 PowerShell + `System.Speech`，两个平台都是真实现而非 stu
 **存量债务 M1–M8 已全部清除。** 剩余工作是能力补全（全屏检测、TTS 预生成），
 不属于「假实现」——现有路径都真的执行了它们声称的事。
 
-### 🟡 计划内 stub（尚未引入，T23 建立）
+### 🟡 计划内 stub（T23 已建立）
 
 | # | 位置 | 说明 | 约束 |
 |---|---|---|---|
-| S1 | `src-tauri/src/platform/stub.rs` | 非 Windows 平台的 `PlatformIntegration` 实现 | **永久保留**（开发机需要），但必须返回 `BusyState::Unknown` 并记 warn 日志，**禁止返回 `Normal` 伪装成正常**。真实能力仅在 Windows 实现中 |
+| S1 | `src-tauri/src/platform/stub.rs` | 非 Windows 平台的 `PlatformIntegration` 实现 | ✅ **已按约束实现**：返回 `BusyState::Unknown` 并记 warn（只记一次，避免 30 秒轮询淹没日志）。真实能力在 `windows_impl.rs` |
+
+#### S1 实现说明（T23）
+
+`BusyState` 刻意区分 `Unknown` 与 `Normal`——前者表示「无从得知」，后者表示
+「确认用户空闲」。调度器对两者的处理不同：`Unknown` 照常弹窗（否则开发机上
+整个提醒功能无法验证），但真实忙碌状态会跳过且**不标记 eligible**，
+因为用户从未获得那次机会（决议 S6）。
+
+`windows_impl.rs` **无法在开发机验证**。首次在 Windows 上运行必须实测：
+打开全屏游戏，确认返回 `FullScreenD3D` 而非 `Normal`。
 
 > S1 是本清单中唯一允许长期存在的 stub。它的正当性在于：开发机为 macOS，而 `SHQueryUserNotificationState` 是 Windows 专有 API。
 > 它之所以安全，是因为返回 `Unknown` 强制调用方显式处理——**能力缺失无法伪装成一切正常**。这正是审计 M6 那类 silent fallback 的反面。

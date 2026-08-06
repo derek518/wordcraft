@@ -221,20 +221,37 @@ pub fn set_paused(conn: &Connection, date: &str, paused: bool) -> Result<(), Str
     Ok(())
 }
 
-pub fn set_streak_outcome(conn: &Connection, date: &str, outcome: &str) -> Result<(), String> {
+/// 落定当日结算结果。
+///
+/// `eligible` 与 `completed` 由调用方传入而非在此重算——哪些时段计入判定
+/// 是业务规则（`free` 不算、`eligible` 取标记与实际启动的较大值），规则写在
+/// `progression` 里。此处自行重算会得到与判定不同的数字，留下自相矛盾的记录。
+pub fn set_streak_outcome(
+    conn: &Connection,
+    date: &str,
+    outcome: &str,
+    eligible: i64,
+    completed: i64,
+) -> Result<(), String> {
     const VALID: [&str; 6] = [
         "pending", "increment", "perfect", "frozen", "broken", "makeup_used",
     ];
     if !VALID.contains(&outcome) {
         return Err(format!("非法 streak_outcome `{outcome}`"));
     }
+    if eligible < 0 || completed < 0 {
+        return Err(format!(
+            "eligible/completed 不能为负，收到 {eligible}/{completed}"
+        ));
+    }
 
     daily_record(conn, date)?;
-    let completed = for_date(conn, date)?.iter().filter(|s| s.is_completed).count() as i64;
 
     conn.execute(
-        "UPDATE daily_records SET streak_outcome = ?2, completed_count = ?3 WHERE date = ?1",
-        rusqlite::params![date, outcome, completed],
+        "UPDATE daily_records
+         SET streak_outcome = ?2, eligible_count = ?3, completed_count = ?4
+         WHERE date = ?1",
+        rusqlite::params![date, outcome, eligible, completed],
     )
     .map_err(|e| format!("设置 streak 判定结果失败: {e}"))?;
     Ok(())
@@ -355,12 +372,21 @@ mod tests {
         finish(&conn, a.id, 5, 10, NOW).unwrap();
         finish(&conn, b.id, 5, 10, NOW).unwrap();
 
-        set_streak_outcome(&conn, D, "increment").unwrap();
+        // 计数由调用方传入——判定规则（free 不计、eligible 如何取值）属业务层
+        set_streak_outcome(&conn, D, "increment", 3, 2).unwrap();
         let rec = daily_record(&conn, D).unwrap();
         assert_eq!(rec.streak_outcome, "increment");
-        assert_eq!(rec.completed_count, 2, "完成数应与 sessions 表一致");
+        assert_eq!(rec.eligible_count, 3);
+        assert_eq!(rec.completed_count, 2);
 
-        assert!(set_streak_outcome(&conn, D, "maybe").is_err(), "非法值未被拒绝");
+        assert!(
+            set_streak_outcome(&conn, D, "maybe", 3, 2).is_err(),
+            "非法 outcome 未被拒绝"
+        );
+        assert!(
+            set_streak_outcome(&conn, D, "increment", -1, 2).is_err(),
+            "负数计数未被拒绝"
+        );
     }
 
     #[test]

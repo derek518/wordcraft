@@ -137,7 +137,13 @@ pub fn settle(conn: &Connection, date: &str) -> Result<SettleResult, String> {
     );
 
     let current_streak = apply_outcome(conn, outcome, stats.current_streak, date)?;
-    sessions::set_streak_outcome(conn, date, outcome.as_str())?;
+    sessions::set_streak_outcome(
+        conn,
+        date,
+        outcome.as_str(),
+        eligible as i64,
+        completed as i64,
+    )?;
 
     Ok(SettleResult {
         date: date.to_string(),

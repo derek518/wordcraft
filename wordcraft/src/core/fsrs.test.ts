@@ -164,6 +164,95 @@ describe('完整评分流程', () => {
     expect(wrong.dto.rating).toBe(1)
   })
 
+  describe('强化队列到期日覆盖（contracts §4.2）', () => {
+    it('强化中的词到期日不超过次日，即便 FSRS 给了长间隔', () => {
+      const now = new Date('2026-08-06T10:00:00Z')
+      // 错过一次、刚答对一次：streak 未达 2，仍在强化队列。
+      // 此时 Easy 评级会让 FSRS 给出多天间隔
+      const { dto } = gradeAnswer({
+        item: newWord({
+          app_state: 'reinforcing',
+          fsrs_state: 3,
+          reps: 2,
+          lapses: 1,
+          stability: 6,
+          difficulty: 5,
+          reinforce_streak: 0,
+        }),
+        questionType: 1,
+        isCorrect: true,
+        reactionMs: 1500, // Easy
+        sessionId: null,
+        now,
+      })
+
+      expect(dto.appState).toBe('reinforcing')
+      const dueMs = Date.parse(dto.after.dueAt)
+      const limit = now.getTime() + 24 * 60 * 60 * 1000
+      expect(dueMs).toBeLessThanOrEqual(limit)
+    })
+
+    it('非强化状态不受此上限约束', () => {
+      const now = new Date('2026-08-06T10:00:00Z')
+      const { dto } = gradeAnswer({
+        item: newWord({
+          app_state: 'review',
+          fsrs_state: 2,
+          reps: 5,
+          stability: 40,
+          difficulty: 4,
+          due_at: '2026-08-06T00:00:00Z',
+        }),
+        questionType: 1,
+        isCorrect: true,
+        reactionMs: 1500,
+        sessionId: null,
+        now,
+      })
+
+      expect(dto.appState).toBe('review')
+      // 复习词应享受 FSRS 的长间隔
+      const dueMs = Date.parse(dto.after.dueAt)
+      expect(dueMs).toBeGreaterThan(now.getTime() + 24 * 60 * 60 * 1000)
+    })
+
+    it('答错落入强化队列时到期日也受限', () => {
+      const now = new Date('2026-08-06T10:00:00Z')
+      const { dto } = gradeAnswer({
+        item: newWord({
+          app_state: 'review',
+          fsrs_state: 2,
+          reps: 3,
+          stability: 30,
+          difficulty: 5,
+        }),
+        questionType: 1,
+        isCorrect: false,
+        reactionMs: 9000,
+        sessionId: null,
+        now,
+      })
+      expect(dto.appState).toBe('reinforcing')
+      expect(Date.parse(dto.after.dueAt)).toBeLessThanOrEqual(
+        now.getTime() + 24 * 60 * 60 * 1000,
+      )
+    })
+  })
+
+  it('stability 有值而 difficulty 为 0 时不崩溃', () => {
+    // 摸底预分级（T28）只赋 stability 就会产生这种状态。ts-fsrs 对此抛
+    // FSRSValidationError，若不兜底会让整个会话在运行时挂掉
+    expect(() =>
+      gradeAnswer({
+        item: newWord({ app_state: 'review', fsrs_state: 2, reps: 1, stability: 14, difficulty: 0 }),
+        questionType: 1,
+        isCorrect: true,
+        reactionMs: 2000,
+        sessionId: null,
+      }),
+    ).not.toThrow()
+  })
+
   it('强化中的词连对两次后离开强化队列', () => {
     const item = newWord({
       app_state: 'reinforcing',

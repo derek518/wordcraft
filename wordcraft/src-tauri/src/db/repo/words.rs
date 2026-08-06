@@ -109,28 +109,110 @@ pub fn search(conn: &Connection, keyword: &str, limit: i64) -> Result<Vec<Word>,
 ///
 /// 仅返回候选，具体挑选规则（编辑距离、频段匹配、子串包含检查）由前端
 /// `src/core/distractors.ts` 负责——那是纯逻辑，放在能被充分单测的一侧。
+/// 干扰项是否与正确释义冲突。
+///
+/// 互为子串也算冲突：正确答案是「在……之后」时，「之后」作为选项等于把答案
+/// 拆成两半摆在面前。
+fn conflicts_with(candidate: &str, correct: &str) -> bool {
+    candidate == correct || candidate.contains(correct) || correct.contains(candidate)
+}
+
+/// 干扰项候选池，contracts §6。
+///
+/// 三级降级：同词性 → 同区域 → 全库。**降级是必需的而非兜底**——词性标注
+/// 细到 `prep./conj.` 这种粒度时，整个词库里可能只有一个词属于该词性，
+/// 排除自身后候选池为空，题目就只剩正确答案一个选项。
 pub fn distractor_pool(
     conn: &Connection,
     word_id: i64,
     pos: &str,
     limit: i64,
 ) -> Result<Vec<String>, String> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT meaning FROM words
-             WHERE pos = ?1 AND id != ?2
-             ORDER BY RANDOM() LIMIT ?3",
-        )
-        .map_err(|e| format!("准备干扰项查询失败: {e}"))?;
+    use std::collections::HashSet;
 
+    let (correct, zone): (String, String) = conn
+        .query_row(
+            "SELECT meaning, zone FROM words WHERE id = ?1",
+            [word_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(|e| format!("查询词条 {word_id} 失败: {e}"))?;
+
+    let mut pool: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    seen.insert(correct.clone());
+
+    let fetch = limit * 4; // 多取一些，冲突过滤后仍够用
+
+    // 一级：同词性。形近/义近干扰对高阶题型最有价值
+    collect_distractors(
+        conn,
+        "SELECT meaning FROM words WHERE pos = ?1 AND id != ?2 ORDER BY RANDOM() LIMIT ?3",
+        &[&pos, &word_id, &fetch],
+        &correct,
+        limit,
+        &mut pool,
+        &mut seen,
+    )?;
+
+    // 二级：同区域。同一区域的词难度相近，比全库随机更合适
+    if (pool.len() as i64) < limit {
+        collect_distractors(
+            conn,
+            "SELECT meaning FROM words WHERE zone = ?1 AND id != ?2 ORDER BY RANDOM() LIMIT ?3",
+            &[&zone, &word_id, &fetch],
+            &correct,
+            limit,
+            &mut pool,
+            &mut seen,
+        )?;
+    }
+
+    // 三级：全库。宁可干扰项跨区域，也不能让题目只有一个选项
+    if (pool.len() as i64) < limit {
+        collect_distractors(
+            conn,
+            "SELECT meaning FROM words WHERE id != ?1 ORDER BY RANDOM() LIMIT ?2",
+            &[&word_id, &fetch],
+            &correct,
+            limit,
+            &mut pool,
+            &mut seen,
+        )?;
+    }
+
+    Ok(pool)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_distractors(
+    conn: &Connection,
+    sql: &str,
+    params: &[&dyn rusqlite::ToSql],
+    correct: &str,
+    limit: i64,
+    pool: &mut Vec<String>,
+    seen: &mut std::collections::HashSet<String>,
+) -> Result<(), String> {
+    let mut stmt = conn
+        .prepare(sql)
+        .map_err(|e| format!("准备干扰项查询失败: {e}"))?;
     let rows = stmt
-        .query_map(rusqlite::params![pos, word_id, limit], |r| {
-            r.get::<_, String>(0)
-        })
+        .query_map(params, |r| r.get::<_, String>(0))
         .map_err(|e| format!("查询干扰项失败: {e}"))?;
 
-    rows.collect::<Result<_, _>>()
-        .map_err(|e| format!("读取干扰项失败: {e}"))
+    for row in rows {
+        if pool.len() as i64 >= limit {
+            break;
+        }
+        let meaning = row.map_err(|e| format!("读取干扰项失败: {e}"))?;
+        if seen.contains(&meaning) || conflicts_with(&meaning, correct) {
+            continue;
+        }
+        seen.insert(meaning.clone());
+        pool.push(meaning);
+    }
+    Ok(())
 }
 
 /// 校验单条导入数据。契约 §8「导入校验」。
@@ -366,9 +448,9 @@ mod tests {
     }
 
     #[test]
-    fn 干扰项池排除自身且限定同词性() {
+    fn 干扰项优先同词性且排除自身() {
         let mut conn = db();
-        let mut items: Vec<WordImport> = (0..5)
+        let mut items: Vec<WordImport> = (0..6)
             .map(|i| {
                 let mut w = sample(&format!("noun{}", (b'a' + i) as char));
                 w.meaning = format!("名词释义{i}");
@@ -381,10 +463,93 @@ mod tests {
         items.push(verb);
         import(&mut conn, &items).unwrap();
 
-        let pool = distractor_pool(&conn, 1, "n.", 10).unwrap();
-        assert_eq!(pool.len(), 4, "应返回同词性的其余 4 个");
-        assert!(!pool.contains(&"名词释义0".to_string()), "自身不应出现在干扰项中");
-        assert!(!pool.contains(&"跑".to_string()), "不同词性不应出现");
+        // 同词性有 5 个可选，取 3 个时不需要降级
+        let pool = distractor_pool(&conn, 1, "n.", 3).unwrap();
+        assert_eq!(pool.len(), 3);
+        assert!(!pool.contains(&"名词释义0".to_string()), "自身不应出现");
+        assert!(!pool.contains(&"跑".to_string()), "同词性充足时不应降级取其他词性");
+    }
+
+    #[test]
+    fn 同词性候选不足时降级补足() {
+        let mut conn = db();
+        // 这个词性全库只有它自己——正是 `after` 的 prep./conj. 情况
+        let mut lonely = sample("after");
+        lonely.pos = "prep./conj.".into();
+        lonely.meaning = "在之后".into();
+
+        let mut items = vec![lonely];
+        for i in 0..5 {
+            let mut w = sample(&format!("noun{}", (b'a' + i) as char));
+            w.meaning = format!("名词释义{i}");
+            items.push(w);
+        }
+        import(&mut conn, &items).unwrap();
+
+        let pool = distractor_pool(&conn, 1, "prep./conj.", 3).unwrap();
+        assert_eq!(
+            pool.len(),
+            3,
+            "同词性无候选时必须降级补足，否则题目只剩正确答案一个选项"
+        );
+        assert!(!pool.contains(&"在之后".to_string()));
+    }
+
+    #[test]
+    fn 干扰项排除与正确释义互为子串的候选() {
+        let mut conn = db();
+        let mut target = sample("after");
+        target.meaning = "在之后".into();
+
+        let mut substring = sample("later");
+        substring.meaning = "之后".into(); // 是正确释义的子串
+
+        let mut superstring = sample("afterward");
+        superstring.meaning = "在之后的时间".into(); // 包含正确释义
+
+        let mut normal = sample("cat");
+        normal.meaning = "猫".into();
+
+        import(&mut conn, &[target, substring, superstring, normal]).unwrap();
+
+        let pool = distractor_pool(&conn, 1, "n.", 3).unwrap();
+        assert!(!pool.contains(&"之后".to_string()), "子串候选应被排除");
+        assert!(!pool.contains(&"在之后的时间".to_string()), "超串候选应被排除");
+        assert!(pool.contains(&"猫".to_string()));
+    }
+
+    #[test]
+    fn 干扰项无重复() {
+        let mut conn = db();
+        let items: Vec<WordImport> = (0..8)
+            .map(|i| {
+                let mut w = sample(&format!("noun{}", (b'a' + i) as char));
+                w.meaning = format!("名词释义{i}");
+                w
+            })
+            .collect();
+        import(&mut conn, &items).unwrap();
+
+        for _ in 0..20 {
+            let pool = distractor_pool(&conn, 1, "n.", 3).unwrap();
+            let unique: std::collections::HashSet<_> = pool.iter().collect();
+            assert_eq!(unique.len(), pool.len(), "干扰项出现重复: {pool:?}");
+        }
+    }
+
+    #[test]
+    fn 词库过小时返回全部可用候选而不报错() {
+        let mut conn = db();
+        let mut a = sample("alpha");
+        a.meaning = "甲".into();
+        let mut b = sample("beta");
+        b.meaning = "乙".into();
+        import(&mut conn, &[a, b]).unwrap();
+
+        // 全库只有 2 个词，最多只能给出 1 个干扰项
+        let pool = distractor_pool(&conn, 1, "n.", 3).unwrap();
+        assert_eq!(pool.len(), 1);
+        assert_eq!(pool[0], "乙");
     }
 
     #[test]
@@ -403,6 +568,14 @@ mod tests {
         assert_eq!(count(&conn).unwrap(), 0);
         assert!(find_by_id(&conn, 1).unwrap().is_none());
         assert!(search(&conn, "x", 10).unwrap().is_empty());
-        assert!(distractor_pool(&conn, 1, "n.", 3).unwrap().is_empty());
+    }
+
+    #[test]
+    fn 干扰项查询对不存在的词条报错() {
+        let conn = db();
+        // 与「空库返回空」不同：word_id 指向不存在的词是调用方的逻辑错误。
+        // 静默返回空会让题目只剩一个选项，且没有任何线索指向根因
+        let err = distractor_pool(&conn, 999, "n.", 3).unwrap_err();
+        assert!(err.contains("999"), "错误消息应指明是哪个词条: {err}");
     }
 }

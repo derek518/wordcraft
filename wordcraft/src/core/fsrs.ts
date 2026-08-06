@@ -23,15 +23,28 @@ const scheduler = fsrs(
   }),
 )
 
+/**
+ * FSRS 的 difficulty 取值范围中位。
+ *
+ * 仅用于修补不一致状态：stability 已有值而 difficulty 为 0 时，ts-fsrs 会抛
+ * `FSRSValidationError`。这种组合本不该出现，但摸底预分级（T28）会批量赋
+ * stability，一旦漏设 difficulty 就会让整个会话在运行时崩溃。
+ */
+const FALLBACK_DIFFICULTY = 5
+
 /** 把队列项还原成 ts-fsrs 的 Card。新词返回空卡。 */
 export function toCard(item: QueueItem, now: Date = new Date()): Card {
   if (item.reps === 0 && item.app_state === 'new') {
     return createEmptyCard(now)
   }
+  // difficulty 与 stability 必须同为 0（新卡）或同为正数，否则 ts-fsrs 拒绝
+  const difficulty =
+    item.stability > 0 && item.difficulty <= 0 ? FALLBACK_DIFFICULTY : item.difficulty
+
   return {
     due: item.due_at ? new Date(item.due_at) : now,
     stability: item.stability,
-    difficulty: item.difficulty,
+    difficulty,
     elapsed_days: 0,
     scheduled_days: 0,
     learning_steps: 0,
@@ -45,6 +58,23 @@ export function toCard(item: QueueItem, now: Date = new Date()): Card {
 function toIsoUtc(date: Date): string {
   // 契约要求 'YYYY-MM-DDTHH:MM:SSZ'（ADR-5），toISOString 会带毫秒，需裁掉
   return `${date.toISOString().slice(0, 19)}Z`
+}
+
+const ONE_DAY_MS = 24 * 60 * 60 * 1000
+
+/**
+ * 强化队列的到期日上限（contracts §4.2）。
+ *
+ * FSRS 不知道「强化队列」这个产品概念——错词重考时被轻松答对，它会给出长间隔
+ * （实测出现过 8 天）。但此时 reinforce_streak 可能才 1，离队需要连续 2 次，
+ * 第二次却要等 8 天，强化队列形同虚设。
+ *
+ * spec F2 要求错词次日必现，这是产品规则，优先于算法建议。
+ */
+function capDueForReinforcing(fsrsDue: Date, appState: string, now: Date): Date {
+  if (appState !== 'reinforcing') return fsrsDue
+  const tomorrow = new Date(now.getTime() + ONE_DAY_MS)
+  return fsrsDue > tomorrow ? tomorrow : fsrsDue
 }
 
 export interface GradeInput {
@@ -102,7 +132,7 @@ export function gradeAnswer(input: GradeInput): GradeOutput {
       after: {
         difficulty: next.difficulty,
         stability: next.stability,
-        dueAt: toIsoUtc(next.due),
+        dueAt: toIsoUtc(capDueForReinforcing(next.due, state.appState, now)),
         fsrsState: next.state,
         reps: next.reps,
         lapses: next.lapses,

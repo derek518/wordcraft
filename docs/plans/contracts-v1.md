@@ -325,6 +325,24 @@ R = 强化池大小 = COUNT(*) WHERE app_state = 'reinforcing'
 
 **排队占比约束**：`get_session_queue` 返回结果中 `app_state='reinforcing'` 的词数 ≥ `ceil(limit * reinforce_ratio)`，强化池不足则全取。
 
+### 4.2 强化队列的到期日覆盖（2026-08-06 实跑发现）
+
+**`app_state = 'reinforcing'` 时，`due_at` 强制不晚于次日**，覆盖 FSRS 的建议值。
+
+FSRS 只看记忆曲线，不知道「强化队列」这个产品概念。一个错词若在重考时被
+轻松答对，FSRS 会给出长间隔（实测出现过 8 天），但此时它的 `reinforce_streak`
+可能才 1——离队需要连续 2 次，第二次却要等 8 天后。强化队列因此形同虚设。
+
+spec F2 明确要求错词「次日必现」，这是产品规则，优先于算法建议：
+
+```
+if app_state == 'reinforcing':
+    due_at = min(fsrs_due_at, now + 24h)
+```
+
+> ADR-6 把 `fsrs_state` 与 `app_state` 分列已预见算法与产品的分歧，但只分了
+> 状态未分到期日。此处补齐。实现位于前端 `src/core/fsrs.ts`（ADR-2）。
+
 > 正常状态（R≤15）完全等同 spec 原体验。三档而非两档是为了阻尼——两档会在阈值附近反复横跳。
 > 用户不可见此机制，不做 UI 暴露（避免「系统在惩罚我」的感受）。
 

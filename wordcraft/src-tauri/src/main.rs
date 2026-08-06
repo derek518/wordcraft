@@ -6,6 +6,7 @@ use tauri::Manager;
 
 mod commands;
 mod db;
+mod placement;
 mod progression;
 mod queue;
 mod review;
@@ -49,6 +50,10 @@ fn main() {
             commands::session::get_daily_record,
             commands::session::activate_daily_pause,
             progression::settle_day,
+            // 摸底分级
+            placement::get_placement_question,
+            placement::submit_placement_answer,
+            placement::finalize_placement,
             // 统计
             commands::stats::get_today_stats,
             commands::stats::get_overall_stats,

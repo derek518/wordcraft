@@ -6,6 +6,7 @@ use tauri::Manager;
 
 mod commands;
 mod db;
+mod progression;
 mod queue;
 mod review;
 mod scheduler;
@@ -25,6 +26,7 @@ fn main() {
             // 数据库不可用时应用没有任何意义，故此处失败即终止启动，
             // 不降级、不静默继续 —— 那正是审计 D6 的失效模式。
             let database = db::init(app_handle)?;
+            progression::run_daily_rollover(&database)?;
             app.manage(database);
 
             scheduler::start_scheduler(app_handle.clone());
@@ -46,6 +48,7 @@ fn main() {
             commands::session::mark_session_eligible,
             commands::session::get_daily_record,
             commands::session::activate_daily_pause,
+            progression::settle_day,
             // 统计
             commands::stats::get_today_stats,
             commands::stats::get_overall_stats,

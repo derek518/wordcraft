@@ -101,6 +101,18 @@ pub fn local_day_bounds_in<Tz: TimeZone>(
 }
 
 /// 本地日期字符串所属的月份 `YYYY-MM`。用于补签卡月度发放与暂停配额重置。
+/// 两个本地日期（`YYYY-MM-DD`）相差的天数，`to` 晚于 `from` 时为正。
+///
+/// 走 `NaiveDate` 而非字符串或秒数运算（ADR-4）——跨月、跨年、闰年在这里
+/// 都是 chrono 的责任。
+pub fn days_between(from: &str, to: &str) -> Result<i64, String> {
+    let parse = |s: &str| {
+        chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+            .map_err(|e| format!("日期 `{s}` 解析失败: {e}"))
+    };
+    Ok((parse(to)? - parse(from)?).num_days())
+}
+
 pub fn month_of(date: &str) -> Result<String, String> {
     let d = NaiveDate::parse_from_str(date, DATE_FORMAT)
         .map_err(|e| format!("无法解析日期 `{date}`: {e}"))?;

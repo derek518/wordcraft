@@ -218,6 +218,28 @@ fn collect_distractors(
 /// 校验单条导入数据。契约 §8「导入校验」。
 ///
 /// 返回 `Err` 即拒绝该条——**不静默跳过**，拒绝原因会回传给调用方。
+/// 句子是否包含该词的某个词形（契约 §8）。
+///
+/// 取词干后要求**词边界起始**：裸 `contains` 会让 `art` 命中 `start`，
+/// 把明显无关的例句判为合格。
+///
+/// 词干长度取 `len - 3`（下限 3），需与 `scripts/wordlist/build_library.py`
+/// 的同名规则保持一致——两处曾分别用 `-2` 与 `-3`，导致构建脚本报告全部合格，
+/// 而运行时静默拒掉 `overcome`（例句用了过去式 `overcame`，前 6 字符对不上）。
+fn contains_word_form(sentence: &str, word: &str) -> bool {
+    let base = word.split_whitespace().next().unwrap_or(word);
+    let keep = base.len().saturating_sub(3).max(3);
+    let stem: String = base.chars().take(keep).collect::<String>().to_lowercase();
+    if stem.is_empty() {
+        return false;
+    }
+
+    let lower = sentence.to_lowercase();
+    lower.match_indices(&stem).any(|(i, _)| {
+        i == 0 || !lower.as_bytes()[i - 1].is_ascii_alphabetic()
+    })
+}
+
 pub fn validate(item: &WordImport) -> Result<(), String> {
     let w = item.word.trim();
     if w.is_empty() {
@@ -250,9 +272,8 @@ pub fn validate(item: &WordImport) -> Result<(), String> {
         return Err("例句 example_1 为空".into());
     }
     // 例句必须真的包含该词，否则等于没有例句
-    let stem: String = w.chars().take(w.len().saturating_sub(2).max(3)).collect();
-    if !item.example_1.to_lowercase().contains(&stem) {
-        return Err(format!("例句未包含单词 `{w}`"));
+    if !contains_word_form(&item.example_1, w) {
+        return Err(format!("例句未包含单词 `{w}` 的任何词形"));
     }
     if !(1..=5).contains(&item.frequency_band) {
         return Err(format!("frequency_band {} 越界（应为 1-5）", item.frequency_band));
@@ -445,6 +466,32 @@ mod tests {
         w = sample("crystal");
         w.level = "college".into();
         assert!(validate(&w).is_err(), "非法 level 未被拒绝");
+    }
+
+    #[test]
+    fn 例句词形匹配容纳时态变化() {
+        // 不规则动词的例句用变位形式是正常的，词干规则必须容纳
+        assert!(contains_word_form("She overcame her fear of flying.", "overcome"));
+        assert!(contains_word_form("They abandoned the old cart.", "abandon"));
+        assert!(contains_word_form("He is running fast.", "run"));
+        assert!(contains_word_form("The castles stood tall.", "castle"));
+    }
+
+    #[test]
+    fn 例句词形匹配要求词边界() {
+        // 裸 contains 会让 art 命中 start，把无关例句判为合格
+        assert!(!contains_word_form("She will start the race.", "art"));
+        assert!(contains_word_form("She studies art at school.", "art"));
+        // 词干出现在词首才算，出现在词中不算
+        assert!(!contains_word_form("The instrument was heavy.", "rum"));
+    }
+
+    #[test]
+    fn 例句词形规则与构建脚本一致() {
+        // scripts/wordlist/build_library.py 用 len-3（下限 3）。两处曾分别用
+        // -2 与 -3，构建报告 3657 全合格而运行时静默拒掉 overcome
+        assert!(contains_word_form("She overcame it.", "overcome"));
+        assert!(!contains_word_form("Nothing matches here.", "overcome"));
     }
 
     #[test]

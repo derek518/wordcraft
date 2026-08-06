@@ -16,6 +16,7 @@ export default function App() {
   const [showWelcome, setShowWelcome] = useState(false)
   const [bootError, setBootError] = useState('')
   const [importing, setImporting] = useState(false)
+  const [importWarning, setImportWarning] = useState('')
 
   const loadStats = useCallback(async () => {
     try {
@@ -45,8 +46,17 @@ export default function App() {
 
       const outcome = await api.importWords(payload)
       if (outcome.rejected.length > 0) {
-        // 静默跳过会让某些词永远不出现，且无从察觉
+        // 被拒的词永远不会出现在任何练习里。只打 console 等于没报——
+        // 这批数据少了一个 overcome，是靠比对数量才发现的
         console.warn('部分词条未通过校验：', outcome.rejected)
+        const preview = outcome.rejected
+          .slice(0, 3)
+          .map((r) => `${r.word}（${r.reason}）`)
+          .join('、')
+        setImportWarning(
+          `${outcome.rejected.length} 个词条未通过校验，不会出现在练习中：${preview}` +
+            (outcome.rejected.length > 3 ? ' 等' : ''),
+        )
       }
 
       await api.setSetting('onboarding_done', 'true')
@@ -116,6 +126,19 @@ export default function App() {
         <div className="mx-4 mt-4 p-3 rounded-lg bg-wc-surface border border-wc-border text-sm flex items-center gap-2">
           <span className="animate-pulse">⚡</span>
           正在导入词库（3,657 词），首次启动需要几秒…
+        </div>
+      )}
+
+      {importWarning && (
+        <div className="mx-4 mt-4 p-3 rounded-lg bg-wc-warning/10 border border-wc-warning/30 text-sm flex items-start gap-2">
+          <span>⚠️</span>
+          <span className="flex-1 break-words">{importWarning}</span>
+          <button
+            onClick={() => setImportWarning('')}
+            className="text-wc-text-muted hover:text-wc-text px-1"
+          >
+            ✕
+          </button>
         </div>
       )}
 

@@ -20,7 +20,7 @@
 | M5 | `src/components/WordTrainer.tsx` | 50 个硬编码中文释义数组充当干扰项 | T10（原定 T20） | ✅ **已清除** |
 | M6 | `src/components/WordTrainer.tsx` | `catch` 中静默 fallback 到本地 `words.ts` 假数据，掩盖后端故障 | T10（原定 T21） | ✅ **已清除** |
 | M7 | `src/components/AdventureMap.tsx` | `completedToday` 是永远为空的 `useState`，传送门完成状态是假的 | T10（原定 T21） | ✅ **已清除** |
-| M8 | `src/data/words.ts` | 52 词硬编码词库，且 100% 以字母 a 开头（字典序前 52 个，非按词频） | **T18** | 待清除 |
+| M8 | `src/data/words.ts` | 52 词硬编码词库，且 100% 以字母 a 开头（字典序前 52 个，非按词频） | T18 | ✅ **已清除** |
 
 #### T10 清除说明
 
@@ -49,7 +49,21 @@ Windows 走 PowerShell + `System.Speech`，两个平台都是真实现而非 stu
 
 这不构成 mock 债务：当前路径真的会发声，不是「返回 Ok 但什么都没做」。
 
-M8 是唯一残留的存量债务，随 T18 的真实词库导入清除。
+#### M8 清除说明（T18）
+
+`src/data/words.ts` 已删除。真实词库 3,657 词由 ECDICT 考纲词汇（gk ∪ zk）
+提取，例句经 deepseek-v4-flash 生成，全部通过契约 §8 校验后落库。
+构建管线在 `scripts/wordlist/`，来源与方法记于 `SOURCES.md`。
+
+实跑验证：清空数据库后启动应用，`SELECT COUNT(*) FROM words` 返回 **3657**，
+六区分布与设计一致。
+
+---
+
+#### 存量债务剩余项
+
+**M1（scheduler 空壳）是唯一未清除项**，随 T25 弹窗调度实现处理。
+其余 M2–M8 七项已全部清除并经实跑验证。
 
 ### 🟡 计划内 stub（尚未引入，T23 建立）
 
@@ -66,7 +80,7 @@ M8 是唯一残留的存量债务，随 T18 的真实词库导入清除。
 |---|---|---|
 | Phase 1–2（T06–T10） | M3, M4, M5, M6, M7 | ✅ 全部清除 |
 | Phase 3（T19） | M2 | ✅ 已清除 |
-| Phase 3（T18） | M8 | 待办 |
+| Phase 3（T18） | M8 | ✅ 已清除 |
 | Phase 5（T25） | M1 | 待办 |
 
 **Phase 6 结束时本表「存量债务」区必须清空。** 若届时仍有残留，不得进入 spec M1 MVP 验收。

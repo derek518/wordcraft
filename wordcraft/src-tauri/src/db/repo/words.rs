@@ -779,7 +779,7 @@ mod tests {
         // Lv.1：看英文选中文，选项必须是释义
         let lv1 = distractor_pool(&conn, 1, 1, 3).unwrap();
         assert!(
-            lv1.iter().all(|s| s.chars().any(|c| !c.is_ascii())),
+            lv1.iter().all(|s| !s.is_ascii()),
             "Lv.1 的干扰项应为中文释义，实际: {lv1:?}"
         );
 

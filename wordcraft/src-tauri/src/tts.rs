@@ -166,4 +166,28 @@ mod tests {
         assert!(validate_word("水晶").is_err());
         assert!(validate_word("café").is_err());
     }
+
+    /// 合成后端在本机真实可用——会实际发出声音。
+    ///
+    /// 默认跳过：CI 与无音频设备的机器上发声既无意义也无从断言。
+    /// 手动验证用 `cargo test 语音合成后端 -- --ignored --nocapture`。
+    ///
+    /// 校验退出码而非只看 spawn 成功：`spawn` 只证明命令存在，音色缺失或
+    /// 设备被占用时进程会立刻非零退出，而那正是「点了没反应」的真实成因。
+    #[test]
+    #[ignore = "会实际发声，需手动运行"]
+    fn 语音合成后端在本机可用() {
+        let started = std::time::Instant::now();
+        let mut child = spawn_speech("crystal").expect("启动合成进程失败");
+        let spawn_ms = started.elapsed().as_millis();
+
+        let status = child.wait().expect("回收合成进程失败");
+        println!("spawn 耗时 {spawn_ms}ms，退出码 {status}");
+
+        assert!(status.success(), "合成进程异常退出：{status}");
+        assert!(
+            spawn_ms < 300,
+            "spawn 耗时 {spawn_ms}ms 超出 spec F4 的 300ms 预算"
+        );
+    }
 }

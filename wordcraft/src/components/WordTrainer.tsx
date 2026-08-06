@@ -11,11 +11,6 @@ interface WordTrainerProps {
   onFinish: () => void
 }
 
-/**
- * 发音是否可用。TTS 尚未接入（MOCKS M2，计划 T19），Lv.3 听音辨词因此降为 Lv.2。
- * 接入后改为 true，无需改动其他逻辑。
- */
-const AUDIO_AVAILABLE = false
 
 const LEVEL_LABELS: Record<number, string> = {
   1: '英→中',
@@ -62,6 +57,14 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
   const [xpFloat, setXpFloat] = useState<{ xp: number; x: number; y: number } | null>(null)
   const [audioError, setAudioError] = useState('')
 
+  /**
+   * 发音是否可用，由 `tts_provider` 设置决定。
+   *
+   * 关掉发音后 Lv.3 听音辨词必须降级——否则用户面对的是一个不会响的喇叭，
+   * 只能盲猜。用 ref 而非 state：它在会话中途不变，且 `prepareQuestion`
+   * 需要同步读到它，走 state 会因异步更新拿到上一轮的值。
+   */
+  const audioAvailable = useRef(false)
   const startedAt = useRef(0)
   const cardRef = useRef<HTMLDivElement>(null)
 
@@ -75,22 +78,33 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
    * 词库一扩就全线失效。
    */
   const prepareQuestion = useCallback(async (item: QueueItem) => {
-    // 发音尚未接入（MOCKS M2），Lv.3 听音辨词此时降为 Lv.2
-    const level = effectiveLevel(item, AUDIO_AVAILABLE)
+    const level = effectiveLevel(item, audioAvailable.current)
     const distractors = level >= 5 ? [] : await api.getDistractorPool(item.word_id, level, 3)
 
     setQuestion(buildQuestion({ item, level, distractors }))
     setSpellInput('')
+
+    // 听音辨词自动播一次：题面只有一个喇叭图标，不自动播的话用户得先点一下
+    // 才知道要听什么，而计时已经开始了
+    if (level === 3) {
+      void api.playWordAudio(item.word).catch(() => {
+        // 首播失败不阻断答题，用户可点喇叭重试并看到错误
+      })
+    }
     startedAt.current = Date.now()
   }, [])
 
   const load = useCallback(async () => {
     setPhase('loading')
     try {
-      // 静音设置在会话开始时读取一次——每题都查一次数据库没有意义，
+      // 音效与发音设置在会话开始时读取一次——每题都查一次数据库没有意义，
       // 用户不会在答题中途改设置
-      const sound = await api.getSetting('sound_enabled')
+      const [sound, tts] = await Promise.all([
+        api.getSetting('sound_enabled'),
+        api.getSetting('tts_provider'),
+      ])
       setSoundEnabled(sound !== 'false')
+      audioAvailable.current = tts !== 'off'
 
       const items = await api.getSessionQueue(sessionType)
       if (items.length === 0) {

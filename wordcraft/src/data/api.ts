@@ -90,6 +90,51 @@ export const getTodaySessions = () => call<Session[]>('get_today_sessions')
 export const markSessionEligible = (sessionType: SessionType) =>
   call<void>('mark_session_eligible', { sessionType })
 
+// ── 摸底分级 ──────────────────────────
+
+export interface PlacementQuestion {
+  word_id: number
+  word: string
+  phonetic: string
+  pos: string
+  meaning: string
+  band: number
+  answered: number
+  total: number
+}
+
+export interface PlacementOutcome {
+  vocab_estimate: number
+  pass_rates: number[]
+  graded_review: number
+  graded_learning: number
+  skipped_new: number
+}
+
+export interface PlacementAnswerOutcome {
+  band_closed: boolean
+  placement_done: boolean
+}
+
+/** 返回 null 表示摸底已结束，该调 finalizePlacement 了 */
+export const getPlacementQuestion = () =>
+  call<PlacementQuestion | null>('get_placement_question')
+
+export const submitPlacementAnswer = (
+  wordId: number,
+  band: number,
+  isCorrect: boolean,
+  reactionMs: number,
+) =>
+  call<PlacementAnswerOutcome>('submit_placement_answer', {
+    wordId,
+    band,
+    isCorrect,
+    reactionMs,
+  })
+
+export const finalizePlacement = () => call<PlacementOutcome>('finalize_placement')
+
 // ── 统计 ──────────────────────────
 
 export const getOverallStats = () => call<OverallStats>('get_overall_stats')

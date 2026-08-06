@@ -2,12 +2,13 @@ import { useState, useEffect, useCallback } from 'react'
 import AdventureMap from './components/AdventureMap'
 import WordTrainer from './components/WordTrainer'
 import StatsPanel from './components/StatsPanel'
+import PlacementTest from './components/PlacementTest'
 import * as api from './data/api'
 import { levelProgress } from './core/progression'
 import type { OverallStats, SessionType } from './core/types'
 import './index.css'
 
-type View = 'map' | 'train' | 'stats'
+type View = 'map' | 'train' | 'stats' | 'placement'
 
 export default function App() {
   const [view, setView] = useState<View>('map')
@@ -72,6 +73,14 @@ export default function App() {
     void (async () => {
       await bootstrap()
       await loadStats()
+
+      // 摸底未完成则先做摸底：不做的话已经会的词会被当新词从头学一遍
+      try {
+        const stage = await api.getSetting('placement_stage')
+        if (stage !== '2') setView('placement')
+      } catch {
+        // 读不到设置时按已完成处理，不能因为这个把用户挡在门外
+      }
     })()
   }, [bootstrap, loadStats])
 
@@ -152,6 +161,7 @@ export default function App() {
         )}
         {view === 'train' && <WordTrainer sessionType={sessionType} onFinish={finishTraining} />}
         {view === 'stats' && <StatsPanel onBack={() => setView('map')} />}
+        {view === 'placement' && <PlacementTest onFinish={finishTraining} />}
       </main>
 
       {showWelcome && (

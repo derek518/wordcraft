@@ -26,17 +26,24 @@ pub fn search_words(db: State<Db>, keyword: String, limit: i64) -> Result<Vec<wo
     words::search(&conn, keyword.trim(), limit)
 }
 
-/// 干扰项候选池。真正的组题在前端（contracts §6），此处只负责按词性取候选。
+/// 干扰项候选池，contracts §6。
+///
+/// `question_level` 同时决定两件事：返回释义还是单词（Lv.1 选中文、Lv.2+ 选英文），
+/// 以及候选的相似度排序策略。词性、频段等条件由后端从 `word_id` 自行查出，
+/// 前端不必了解挑选规则。
 #[tauri::command]
 pub fn get_distractor_pool(
     db: State<Db>,
     word_id: i64,
-    pos: String,
+    question_level: i64,
     count: i64,
 ) -> Result<Vec<String>, String> {
     if !(1..=50).contains(&count) {
         return Err(format!("count 必须在 1..50，收到 {count}"));
     }
+    if !(1..=5).contains(&question_level) {
+        return Err(format!("question_level 必须在 1..5，收到 {question_level}"));
+    }
     let conn = db.0.lock().map_err(|e| format!("获取数据库锁失败: {e}"))?;
-    words::distractor_pool(&conn, word_id, &pos, count)
+    words::distractor_pool(&conn, word_id, question_level, count)
 }

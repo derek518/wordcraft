@@ -119,69 +119,155 @@ fn conflicts_with(candidate: &str, correct: &str) -> bool {
 
 /// 干扰项候选池，contracts §6。
 ///
+/// **返回内容随题型翻转**：Lv.1 是「看英文选中文」，干扰项必须是释义；
+/// Lv.2–4 是「看中文/听音/看例句选英文」，干扰项必须是单词。搞反了题目就
+/// 变成「看中文选中文」，四个选项全是同类，题面完全失效。
+///
 /// 三级降级：同词性 → 同区域 → 全库。**降级是必需的而非兜底**——词性标注
 /// 细到 `prep./conj.` 这种粒度时，整个词库里可能只有一个词属于该词性，
 /// 排除自身后候选池为空，题目就只剩正确答案一个选项。
+///
+/// 各级内部的排序策略也随题型变化（决议 S11）：Lv.1 纯随机，**刻意不用编辑
+/// 距离**——把 `adapt/adopt/adept` 摆在一起会让初学者建立混淆记忆；形近区分
+/// 从 Lv.2 起才逐步引入。
 pub fn distractor_pool(
     conn: &Connection,
     word_id: i64,
-    pos: &str,
+    question_level: i64,
     limit: i64,
 ) -> Result<Vec<String>, String> {
     use std::collections::HashSet;
 
-    let (correct, zone): (String, String) = conn
+    let (word, meaning, pos, zone, band): (String, String, String, String, i64) = conn
         .query_row(
-            "SELECT meaning, zone FROM words WHERE id = ?1",
+            "SELECT word, meaning, pos, zone, frequency_band FROM words WHERE id = ?1",
             [word_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
         )
         .map_err(|e| format!("查询词条 {word_id} 失败: {e}"))?;
+
+    // Lv.1 选释义，其余选单词
+    let answer_col = if question_level <= 1 { "meaning" } else { "word" };
+    let correct = if question_level <= 1 { &meaning } else { &word };
 
     let mut pool: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     seen.insert(correct.clone());
 
-    let fetch = limit * 4; // 多取一些，冲突过滤后仍够用
+    let fetch = limit * 6; // 多取一些，冲突过滤与相似度排序后仍够用
 
-    // 一级：同词性。形近/义近干扰对高阶题型最有价值
+    // 一级：同词性，按题型对应的相似度排序
+    let sql = level_ordered_sql(answer_col, question_level, "pos = ?1 AND id != ?2");
     collect_distractors(
         conn,
-        "SELECT meaning FROM words WHERE pos = ?1 AND id != ?2 ORDER BY RANDOM() LIMIT ?3",
+        &sql,
         &[&pos, &word_id, &fetch],
-        &correct,
+        correct,
         limit,
         &mut pool,
         &mut seen,
+        question_level,
+        &word,
+        band,
     )?;
 
     // 二级：同区域。同一区域的词难度相近，比全库随机更合适
     if (pool.len() as i64) < limit {
+        let sql = level_ordered_sql(answer_col, question_level, "zone = ?1 AND id != ?2");
         collect_distractors(
             conn,
-            "SELECT meaning FROM words WHERE zone = ?1 AND id != ?2 ORDER BY RANDOM() LIMIT ?3",
+            &sql,
             &[&zone, &word_id, &fetch],
-            &correct,
+            correct,
             limit,
             &mut pool,
             &mut seen,
+            question_level,
+            &word,
+            band,
         )?;
     }
 
     // 三级：全库。宁可干扰项跨区域，也不能让题目只有一个选项
     if (pool.len() as i64) < limit {
+        let sql = format!(
+            "SELECT {answer_col}, word, frequency_band FROM words WHERE id != ?1 ORDER BY RANDOM() LIMIT ?2"
+        );
         collect_distractors(
             conn,
-            "SELECT meaning FROM words WHERE id != ?1 ORDER BY RANDOM() LIMIT ?2",
+            &sql,
             &[&word_id, &fetch],
-            &correct,
+            correct,
             limit,
             &mut pool,
             &mut seen,
+            question_level,
+            &word,
+            band,
         )?;
     }
 
     Ok(pool)
+}
+
+/// 按题型拼接候选查询。
+///
+/// Lv.4 例句挖空要求同频段——挖空处的选项若难度悬殊，用排除法就能猜中，
+/// 考不出对目标词的掌握。SQL 层先按频段接近度排序，取到的候选更贴题。
+fn level_ordered_sql(answer_col: &str, question_level: i64, where_clause: &str) -> String {
+    let order = if question_level >= 4 {
+        "ABS(frequency_band - (SELECT frequency_band FROM words WHERE id = ?2)), RANDOM()"
+    } else {
+        "RANDOM()"
+    };
+    format!("SELECT {answer_col}, word, frequency_band FROM words WHERE {where_clause} ORDER BY {order} LIMIT ?3")
+}
+
+/// Levenshtein 编辑距离。
+///
+/// 用于 Lv.2 优先挑选形近词。只需要小词长的比较，朴素 DP 足够。
+pub fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    if a.is_empty() {
+        return b.len();
+    }
+    if b.is_empty() {
+        return a.len();
+    }
+
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0usize; b.len() + 1];
+
+    for (i, ca) in a.iter().enumerate() {
+        cur[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cost = usize::from(ca != cb);
+            cur[j + 1] = (prev[j] + cost).min(prev[j + 1] + 1).min(cur[j] + 1);
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
+}
+
+/// 两词是否音近——近似判据：首字母相同且长度接近。
+///
+/// 契约要求「首音素相同」，严格实现需要音标解析（`/ˈkrɪstl/` 里剥离重音符号
+/// 再切分音素）。首字母在英语里与首音素高度相关，且不会因音标格式差异而失效；
+/// 加长度约束是为了排除 `a` 与 `abandon` 这类听感差异明显的配对。
+fn sounds_similar(a: &str, b: &str) -> bool {
+    let (fa, fb) = (a.chars().next(), b.chars().next());
+    fa.is_some()
+        && fa == fb
+        && (a.len() as i64 - b.len() as i64).abs() <= 3
+}
+
+/// 一条候选：`answer` 是最终呈现给用户的选项文本（释义或单词），
+/// 另两项仅用于相似度排序。
+struct Candidate {
+    answer: String,
+    word: String,
+    band: i64,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -193,26 +279,67 @@ fn collect_distractors(
     limit: i64,
     pool: &mut Vec<String>,
     seen: &mut std::collections::HashSet<String>,
+    question_level: i64,
+    target_word: &str,
+    target_band: i64,
 ) -> Result<(), String> {
     let mut stmt = conn
         .prepare(sql)
         .map_err(|e| format!("准备干扰项查询失败: {e}"))?;
     let rows = stmt
-        .query_map(params, |r| r.get::<_, String>(0))
+        .query_map(params, |r| {
+            Ok(Candidate {
+                answer: r.get(0)?,
+                word: r.get(1)?,
+                band: r.get(2)?,
+            })
+        })
         .map_err(|e| format!("查询干扰项失败: {e}"))?;
 
+    // 先全量收集再排序：相似度是候选之间的相对关系，边读边取会锁死在
+    // 先到的那几条上，拿不到真正最像的
+    let mut candidates: Vec<Candidate> = Vec::new();
     for row in rows {
+        let c = row.map_err(|e| format!("读取干扰项失败: {e}"))?;
+        if seen.contains(&c.answer) || conflicts_with(&c.answer, correct) {
+            continue;
+        }
+        candidates.push(c);
+    }
+
+    sort_by_level(&mut candidates, question_level, target_word, target_band);
+
+    for c in candidates {
         if pool.len() as i64 >= limit {
             break;
         }
-        let meaning = row.map_err(|e| format!("读取干扰项失败: {e}"))?;
-        if seen.contains(&meaning) || conflicts_with(&meaning, correct) {
-            continue;
-        }
-        seen.insert(meaning.clone());
-        pool.push(meaning);
+        seen.insert(c.answer.clone());
+        pool.push(c.answer);
     }
     Ok(())
+}
+
+/// 按题型对候选排序，越靠前越优先入选（contracts §6）。
+fn sort_by_level(
+    candidates: &mut [Candidate],
+    question_level: i64,
+    target_word: &str,
+    target_band: i64,
+) {
+    match question_level {
+        // Lv.2 中→英：形近词优先，逼迫精确区分拼写
+        2 => candidates.sort_by_key(|c| edit_distance(&c.word, target_word)),
+
+        // Lv.3 听音辨词：音近优先，考查听辨而非视觉记忆
+        3 => candidates.sort_by_key(|c| u8::from(!sounds_similar(&c.word, target_word))),
+
+        // Lv.4 例句挖空：频段接近优先。选项难度悬殊时靠排除法就能猜中，
+        // 考不出对目标词的掌握
+        4..=5 => candidates.sort_by_key(|c| (c.band - target_band).abs()),
+
+        // Lv.1 保持 SQL 的随机序。决议 S11：初学阶段引入形近词会制造混淆记忆
+        _ => {}
+    }
 }
 
 /// 校验单条导入数据。契约 §8「导入校验」。
@@ -511,7 +638,7 @@ mod tests {
         import(&mut conn, &items).unwrap();
 
         // 同词性有 5 个可选，取 3 个时不需要降级
-        let pool = distractor_pool(&conn, 1, "n.", 3).unwrap();
+        let pool = distractor_pool(&conn, 1, 1, 3).unwrap();
         assert_eq!(pool.len(), 3);
         assert!(!pool.contains(&"名词释义0".to_string()), "自身不应出现");
         assert!(!pool.contains(&"跑".to_string()), "同词性充足时不应降级取其他词性");
@@ -533,7 +660,7 @@ mod tests {
         }
         import(&mut conn, &items).unwrap();
 
-        let pool = distractor_pool(&conn, 1, "prep./conj.", 3).unwrap();
+        let pool = distractor_pool(&conn, 1, 1, 3).unwrap();
         assert_eq!(
             pool.len(),
             3,
@@ -559,7 +686,7 @@ mod tests {
 
         import(&mut conn, &[target, substring, superstring, normal]).unwrap();
 
-        let pool = distractor_pool(&conn, 1, "n.", 3).unwrap();
+        let pool = distractor_pool(&conn, 1, 1, 3).unwrap();
         assert!(!pool.contains(&"之后".to_string()), "子串候选应被排除");
         assert!(!pool.contains(&"在之后的时间".to_string()), "超串候选应被排除");
         assert!(pool.contains(&"猫".to_string()));
@@ -578,7 +705,7 @@ mod tests {
         import(&mut conn, &items).unwrap();
 
         for _ in 0..20 {
-            let pool = distractor_pool(&conn, 1, "n.", 3).unwrap();
+            let pool = distractor_pool(&conn, 1, 1, 3).unwrap();
             let unique: std::collections::HashSet<_> = pool.iter().collect();
             assert_eq!(unique.len(), pool.len(), "干扰项出现重复: {pool:?}");
         }
@@ -594,7 +721,7 @@ mod tests {
         import(&mut conn, &[a, b]).unwrap();
 
         // 全库只有 2 个词，最多只能给出 1 个干扰项
-        let pool = distractor_pool(&conn, 1, "n.", 3).unwrap();
+        let pool = distractor_pool(&conn, 1, 1, 3).unwrap();
         assert_eq!(pool.len(), 1);
         assert_eq!(pool[0], "乙");
     }
@@ -617,12 +744,156 @@ mod tests {
         assert!(search(&conn, "x", 10).unwrap().is_empty());
     }
 
+    // ── 题型分级（contracts §6）──────────────────────────
+
+    /// 造一批同词性、拼写差异可控的词，用于观察排序策略。
+    fn seed_for_levels(conn: &mut Connection) {
+        let specs = [
+            // (word, meaning, band) —— adapt/adopt/adept 互为形近词
+            ("adapt", "适应", 1),
+            ("adopt", "采用", 2),
+            ("adept", "熟练的", 4),
+            ("mountain", "山脉", 5),
+            ("bicycle", "自行车", 5),
+            ("umbrella", "雨伞", 5),
+            ("acquire", "获得", 1),
+        ];
+        let items: Vec<WordImport> = specs
+            .iter()
+            .map(|(w, m, b)| {
+                let mut item = sample(w);
+                item.meaning = (*m).into();
+                item.frequency_band = *b;
+                item.pos = "v.".into();
+                item
+            })
+            .collect();
+        import(conn, &items).unwrap();
+    }
+
+    #[test]
+    fn 一级题型返回释义二级以上返回单词() {
+        let mut conn = db();
+        seed_for_levels(&mut conn);
+
+        // Lv.1：看英文选中文，选项必须是释义
+        let lv1 = distractor_pool(&conn, 1, 1, 3).unwrap();
+        assert!(
+            lv1.iter().all(|s| s.chars().any(|c| !c.is_ascii())),
+            "Lv.1 的干扰项应为中文释义，实际: {lv1:?}"
+        );
+
+        // Lv.2：看中文选英文，选项必须是单词。搞反了题目会变成「看中文选中文」
+        let lv2 = distractor_pool(&conn, 1, 2, 3).unwrap();
+        assert!(
+            lv2.iter().all(|s| s.is_ascii()),
+            "Lv.2 的干扰项应为英文单词，实际: {lv2:?}"
+        );
+
+        for level in [3, 4, 5] {
+            let pool = distractor_pool(&conn, 1, level, 3).unwrap();
+            assert!(
+                pool.iter().all(|s| s.is_ascii()),
+                "Lv.{level} 的干扰项应为英文单词，实际: {pool:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn 二级题型优先选形近词() {
+        let mut conn = db();
+        seed_for_levels(&mut conn);
+
+        // adapt 的形近词是 adopt(1) / adept(2)，远于 mountain 等
+        let pool = distractor_pool(&conn, 1, 2, 2).unwrap();
+        assert!(
+            pool.contains(&"adopt".to_string()) || pool.contains(&"adept".to_string()),
+            "Lv.2 应优先取形近词，实际: {pool:?}"
+        );
+    }
+
+    #[test]
+    fn 一级题型不引入形近词() {
+        let mut conn = db();
+        seed_for_levels(&mut conn);
+
+        // 决议 S11：adapt/adopt/adept 摆在一起会让初学者建立混淆记忆。
+        // 多跑几轮确认 Lv.1 是随机而非按相似度——若按相似度排，
+        // 形近词的释义会每次都出现
+        let mut near_hits = 0;
+        for _ in 0..30 {
+            let pool = distractor_pool(&conn, 1, 1, 2).unwrap();
+            if pool.contains(&"采用".to_string()) && pool.contains(&"熟练的".to_string()) {
+                near_hits += 1;
+            }
+        }
+        assert!(
+            near_hits < 25,
+            "Lv.1 每轮都取到形近词的释义（{near_hits}/30），说明误用了相似度排序"
+        );
+    }
+
+    #[test]
+    fn 四级题型优先选同频段词() {
+        let mut conn = db();
+        seed_for_levels(&mut conn);
+
+        // acquire 是 band 1，同为 band 1 的只有 adapt；band 5 的三个词最远。
+        // 挖空题里若混入难度悬殊的选项，排除法就能猜中
+        let acquire_id = conn
+            .query_row("SELECT id FROM words WHERE word = 'acquire'", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .unwrap();
+        let pool = distractor_pool(&conn, acquire_id, 4, 2).unwrap();
+        assert!(
+            pool.contains(&"adapt".to_string()),
+            "Lv.4 应优先取同频段词，实际: {pool:?}"
+        );
+    }
+
+    #[test]
+    fn 编辑距离计算正确() {
+        assert_eq!(edit_distance("adapt", "adopt"), 1);
+        assert_eq!(edit_distance("adapt", "adept"), 1);
+        assert_eq!(edit_distance("adapt", "adapt"), 0);
+        assert_eq!(edit_distance("", "abc"), 3);
+        assert_eq!(edit_distance("abc", ""), 3);
+        assert_eq!(edit_distance("kitten", "sitting"), 3);
+    }
+
+    #[test]
+    fn 音近判定要求首字母相同且长度接近() {
+        assert!(sounds_similar("cat", "cap"));
+        assert!(sounds_similar("crystal", "crown"));
+        assert!(!sounds_similar("cat", "dog"), "首字母不同不算音近");
+        assert!(!sounds_similar("a", "abandon"), "长度悬殊不算音近");
+    }
+
+    #[test]
+    fn 各题型都保证选项不重复且不含正确答案() {
+        let mut conn = db();
+        seed_for_levels(&mut conn);
+
+        for level in 1..=5 {
+            let pool = distractor_pool(&conn, 1, level, 3).unwrap();
+            let unique: std::collections::HashSet<_> = pool.iter().collect();
+            assert_eq!(unique.len(), pool.len(), "Lv.{level} 干扰项重复: {pool:?}");
+
+            let answer = if level == 1 { "适应" } else { "adapt" };
+            assert!(
+                !pool.contains(&answer.to_string()),
+                "Lv.{level} 干扰项含正确答案"
+            );
+        }
+    }
+
     #[test]
     fn 干扰项查询对不存在的词条报错() {
         let conn = db();
         // 与「空库返回空」不同：word_id 指向不存在的词是调用方的逻辑错误。
         // 静默返回空会让题目只剩一个选项，且没有任何线索指向根因
-        let err = distractor_pool(&conn, 999, "n.", 3).unwrap_err();
+        let err = distractor_pool(&conn, 999, 1, 3).unwrap_err();
         assert!(err.contains("999"), "错误消息应指明是哪个词条: {err}");
     }
 }

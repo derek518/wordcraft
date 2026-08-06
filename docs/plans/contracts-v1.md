@@ -172,7 +172,10 @@ CREATE TABLE settings (
 get_session_queue(session_type: String, limit: Option<i64>) -> Result<Vec<QueueItem>, String>
 
 /// 返回指定词的干扰项候选池（同词性、编辑距离近的词），由前端组题。
-get_distractor_pool(word_id: i64, pos: String, count: i64) -> Result<Vec<String>, String>
+/// 干扰项候选池。返回内容随题型翻转：Lv.1 返回释义（看英文选中文），
+/// Lv.2-5 返回单词（看中文/听音/看例句选英文）。
+/// 词性、频段等挑选条件由后端从 word_id 自查，前端不需了解规则。
+get_distractor_pool(word_id: i64, question_level: i64, count: i64) -> Result<Vec<String>, String>
 
 /// 批量导入词库。冲突时按 word 唯一键 upsert，返回 (inserted, updated)。
 import_words(payload: Vec<WordImportDto>) -> Result<ImportResult, String>
@@ -386,6 +389,10 @@ else                                  -> Hard(2)
 | 5 | 全拼写（首字母提示） | `question_level >= 5` **且 `frequency_band <= 2`** | 无（输入题） |
 
 **Lv.5 准入限制（决议 S10）**：拼写题仅对 `frequency_band` 1–2 的核心词启用；其余词最高阶止于 Lv.4。
+故 `QueueItem` 必须携带 `frequency_band`——前端据此判定题型上限。
+
+**Lv.3 的音频前置**：听音辨词依赖 TTS。发音未接入前（MOCKS M2）该级降为 Lv.2，
+否则用户面对的是无声题面，只能盲猜。降级逻辑在 `src/core/question.ts::effectiveLevel`。
 理由——目标用户 ADHD + 基础薄弱，拼写是认知负荷最高、挫败感最强的题型；而产品目标是**词汇量覆盖**（认识词）而非写作产出，高考词汇考查绝大部分是认知性的。为 4800 词全部要求拼写掌握，投入产出比过低。
 
 **干扰项分级（决议 S11）**：Lv.1 只用同词性随机，**不引入编辑距离**——`adapt/adopt/adept` 放在一起会对初学者制造**混淆记忆**。形近词精细区分从 Lv.2 起才逐步引入。

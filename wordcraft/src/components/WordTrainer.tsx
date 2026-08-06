@@ -3,11 +3,26 @@ import * as api from '../data/api'
 import { gradeAnswer } from '../core/fsrs'
 import { xpFor } from '../core/progression'
 import { playCorrect, playIncorrect, playSessionComplete, setSoundEnabled } from '../core/sound'
+import { buildQuestion, checkSpelling, effectiveLevel, type Question } from '../core/question'
 import type { QueueItem, SessionType } from '../core/types'
 
 interface WordTrainerProps {
   sessionType: SessionType
   onFinish: () => void
+}
+
+/**
+ * 发音是否可用。TTS 尚未接入（MOCKS M2，计划 T19），Lv.3 听音辨词因此降为 Lv.2。
+ * 接入后改为 true，无需改动其他逻辑。
+ */
+const AUDIO_AVAILABLE = false
+
+const LEVEL_LABELS: Record<number, string> = {
+  1: '英→中',
+  2: '中→英',
+  3: '听音辨词',
+  4: '例句填空',
+  5: '拼写',
 }
 
 const SESSION_NAMES: Record<SessionType, string> = {
@@ -33,7 +48,8 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
 
   const [queue, setQueue] = useState<QueueItem[]>([])
   const [cursor, setCursor] = useState(0)
-  const [options, setOptions] = useState<string[]>([])
+  const [question, setQuestion] = useState<Question | null>(null)
+  const [spellInput, setSpellInput] = useState('')
 
   const [selected, setSelected] = useState<string | null>(null)
   const [isRevealed, setIsRevealed] = useState(false)
@@ -52,19 +68,19 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
   const current = queue[cursor]
 
   /**
-   * 组题。干扰项来自后端的同词性候选池——审计 D5 的硬编码释义数组已删除，
-   * 那个数组恰好是当时 52 个词的释义，词库一扩就全线失效。
+   * 组题。题型由词的 `question_level` 决定（contracts §6），干扰项的语言方向
+   * 随之翻转——Lv.1 选中文释义，Lv.2 以上选英文单词，后端按等级返回对应内容。
+   *
+   * 审计 D5 的硬编码释义数组已删除：那个数组恰好是当时 52 个词的释义，
+   * 词库一扩就全线失效。
    */
-  const buildOptions = useCallback(async (item: QueueItem) => {
-    const pool = await api.getDistractorPool(item.word_id, item.pos, 3)
-    const choices = [...pool, item.meaning]
-    // Fisher-Yates 洗牌。不用 sort(() => Math.random() - 0.5)——那个比较器不满足
-    // 传递性，各引擎排序实现不同，分布明显偏斜
-    for (let i = choices.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1))
-      ;[choices[i], choices[j]] = [choices[j], choices[i]]
-    }
-    setOptions(choices)
+  const prepareQuestion = useCallback(async (item: QueueItem) => {
+    // 发音尚未接入（MOCKS M2），Lv.3 听音辨词此时降为 Lv.2
+    const level = effectiveLevel(item, AUDIO_AVAILABLE)
+    const distractors = level >= 5 ? [] : await api.getDistractorPool(item.word_id, level, 3)
+
+    setQuestion(buildQuestion({ item, level, distractors }))
+    setSpellInput('')
     startedAt.current = Date.now()
   }, [])
 
@@ -86,26 +102,34 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
       setSessionId(session.id)
       setQueue(items)
       setCursor(0)
-      await buildOptions(items[0])
+      await prepareQuestion(items[0])
       setPhase('answering')
     } catch (e) {
       // 不回退到本地假数据（审计 D6）——后端不可用必须让用户看见
       setErrorMessage(e instanceof Error ? e.message : String(e))
       setPhase('error')
     }
-  }, [sessionType, buildOptions])
+  }, [sessionType, prepareQuestion])
 
   useEffect(() => {
     load()
   }, [load])
 
-  const handleSelect = async (option: string) => {
-    if (isRevealed || !current) return
+  /**
+   * 统一的作答处理。选择题传选项文本，拼写题传输入内容。
+   *
+   * 正误判定按题型分流：拼写题要求精确匹配（忽略大小写与空白），
+   * 选择题比对答案文本——注意答案随题型在释义与单词之间切换，
+   * 不能固定拿 `item.meaning` 去比。
+   */
+  const submitAnswer = async (input: string) => {
+    if (isRevealed || !current || !question) return
 
     const reactionMs = Date.now() - startedAt.current
-    const correct = option === current.meaning
+    const correct =
+      question.type >= 5 ? checkSpelling(input, question.answer) : input === question.answer
 
-    setSelected(option)
+    setSelected(input)
     setIsCorrect(correct)
     setIsRevealed(true)
 
@@ -119,7 +143,10 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
 
     const { dto, requeueInSession } = gradeAnswer({
       item: current,
-      questionType: current.question_level,
+      // 用实际出题的等级而非词的 question_level：Lv.3 无音频时降为 Lv.2、
+      // 低频词的 Lv.5 降为 Lv.4，评级阈值必须跟着实际题型走，
+      // 否则会用拼写题的宽松阈值去衡量一道四选一
+      questionType: question.type,
       isCorrect: correct,
       reactionMs,
       sessionId,
@@ -159,7 +186,7 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
       const next = queue[cursor + 1]
       setCursor((c) => c + 1)
       try {
-        await buildOptions(next)
+        await prepareQuestion(next)
       } catch (e) {
         setErrorMessage(e instanceof Error ? e.message : String(e))
         setPhase('error')
@@ -263,7 +290,9 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
     )
   }
 
-  if (!current) return null
+  // question 与 current 同时就绪：prepareQuestion 在切题时一并设置，
+  // 分开判空会让渲染短暂读到上一题的题面
+  if (!current || !question) return null
 
   const progress = (cursor / queue.length) * 100
 
@@ -277,6 +306,11 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
           className={`text-xs font-bold px-3 py-1 rounded-full bg-gradient-to-r ${SESSION_COLORS[sessionType]} text-white`}
         >
           {SESSION_NAMES[sessionType]}
+        </div>
+        {/* 题型标识：同一个词在不同掌握阶段考法不同，
+            不标出来用户会以为界面出了错 */}
+        <div className="text-xs px-2 py-1 rounded bg-wc-surface-2 border border-wc-border text-wc-text-muted">
+          Lv.{question.type} {LEVEL_LABELS[question.type]}
         </div>
         <div className="text-sm font-mono">
           <span className="text-wc-accent">{cursor + 1}</span>
@@ -306,13 +340,38 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
         }`}
       >
         <div className="text-center mb-6">
-          <div className="text-4xl font-bold mb-2 tracking-wide">{current.word}</div>
-          <button
-            className="text-wc-accent text-sm cursor-pointer hover:underline inline-flex items-center gap-1"
-            onClick={handlePlayAudio}
-          >
-            🔊 {current.phonetic}
-          </button>
+          {question.type === 3 && !isRevealed ? (
+            // 听音辨词：作答前不能显示拼写，否则退化成认读题
+            <button
+              onClick={handlePlayAudio}
+              className="text-6xl py-4 hover:scale-110 transition-transform"
+              aria-label="播放发音"
+            >
+              🔊
+            </button>
+          ) : question.type === 4 ? (
+            // 例句填空：题干是挖空后的句子，单词本身不出现
+            <div className="text-xl leading-relaxed py-2">{question.prompt}</div>
+          ) : question.type >= 5 ? (
+            <>
+              <div className="text-2xl font-bold mb-3">{question.prompt}</div>
+              <div className="text-3xl font-mono tracking-[0.3em] text-wc-text-muted">
+                {question.hint}
+              </div>
+            </>
+          ) : question.type === 2 ? (
+            <div className="text-3xl font-bold py-2">{question.prompt}</div>
+          ) : (
+            <>
+              <div className="text-4xl font-bold mb-2 tracking-wide">{current.word}</div>
+              <button
+                className="text-wc-accent text-sm cursor-pointer hover:underline inline-flex items-center gap-1"
+                onClick={handlePlayAudio}
+              >
+                🔊 {current.phonetic}
+              </button>
+            </>
+          )}
           {audioError && (
             <div className="text-xs text-wc-warning mt-2 break-words">
               发音不可用：{audioError}
@@ -338,6 +397,16 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
                 {isCorrect ? '水晶已点亮！' : '水晶尚未点亮...'}
               </span>
             </div>
+            {/* Lv.2 以上作答前不显示拼写，揭晓时必须补上——
+                否则答错的人根本不知道正确的词长什么样 */}
+            {question.concealWord && (
+              <div className="text-lg font-bold mb-1">
+                {current.word}
+                <span className="text-sm text-wc-accent font-normal ml-2">
+                  {current.phonetic}
+                </span>
+              </div>
+            )}
             <div className="text-sm">
               <span className="text-wc-text-muted">释义：</span>
               <span className="font-bold">{current.meaning}</span>
@@ -352,34 +421,75 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 mb-6">
-        {options.map((option, i) => {
-          let btnClass = 'bg-wc-surface-2 border-wc-border hover:border-wc-primary hover:bg-wc-surface'
-
-          if (isRevealed) {
-            if (option === current.meaning) {
-              btnClass = 'bg-wc-success/20 border-wc-success text-wc-success'
-            } else if (option === selected) {
-              btnClass = 'bg-wc-danger/20 border-wc-danger text-wc-danger'
-            } else {
-              btnClass = 'bg-wc-surface-2 border-wc-border opacity-50'
-            }
-          }
-
-          return (
+      {question.type >= 5 ? (
+        <form
+          className="mb-6"
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (spellInput.trim()) void submitAnswer(spellInput)
+          }}
+        >
+          <input
+            type="text"
+            value={spellInput}
+            onChange={(e) => setSpellInput(e.target.value)}
+            disabled={isRevealed}
+            autoFocus
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+            placeholder="拼出这个单词…"
+            className={`w-full px-4 py-4 rounded-lg border bg-wc-surface-2 text-center text-2xl font-mono tracking-wider outline-none transition-all ${
+              isRevealed
+                ? isCorrect
+                  ? 'border-wc-success text-wc-success'
+                  : 'border-wc-danger text-wc-danger'
+                : 'border-wc-border focus:border-wc-primary'
+            }`}
+          />
+          {!isRevealed && (
             <button
-              key={`${option}-${i}`}
-              onClick={() => handleSelect(option)}
-              disabled={isRevealed}
-              className={`p-4 rounded-lg border text-sm font-medium transition-all ${btnClass} ${
-                isRevealed ? 'cursor-default' : 'cursor-pointer active:scale-95'
-              }`}
+              type="submit"
+              disabled={!spellInput.trim()}
+              className="w-full mt-3 py-3 bg-gradient-to-r from-wc-primary to-wc-primary-bright rounded-lg font-bold hover:opacity-90 transition disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              {String.fromCharCode(65 + i)}. {option}
+              确认
             </button>
-          )
-        })}
-      </div>
+          )}
+        </form>
+      ) : (
+        <div className="grid grid-cols-2 gap-3 mb-6">
+          {question.options.map((option, i) => {
+            let btnClass =
+              'bg-wc-surface-2 border-wc-border hover:border-wc-primary hover:bg-wc-surface'
+
+            if (isRevealed) {
+              // 与 question.answer 比对而非 item.meaning——答案随题型在
+              // 释义与单词之间切换，固定比释义会让 Lv.2 以上全部标错
+              if (option === question.answer) {
+                btnClass = 'bg-wc-success/20 border-wc-success text-wc-success'
+              } else if (option === selected) {
+                btnClass = 'bg-wc-danger/20 border-wc-danger text-wc-danger'
+              } else {
+                btnClass = 'bg-wc-surface-2 border-wc-border opacity-50'
+              }
+            }
+
+            return (
+              <button
+                key={`${option}-${i}`}
+                onClick={() => submitAnswer(option)}
+                disabled={isRevealed}
+                className={`p-4 rounded-lg border text-sm font-medium transition-all ${btnClass} ${
+                  isRevealed ? 'cursor-default' : 'cursor-pointer active:scale-95'
+                }`}
+              >
+                {String.fromCharCode(65 + i)}. {option}
+              </button>
+            )
+          })}
+        </div>
+      )}
 
       {isRevealed && (
         <div className="text-center pop-in">

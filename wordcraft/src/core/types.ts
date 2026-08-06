@@ -29,6 +29,8 @@ export interface QueueItem {
   meaning: string
   example_1: string
   example_2: string
+  /** Lv.5 拼写题准入判据（决议 S10：仅 1–2 段核心词开放） */
+  frequency_band: number
   difficulty: number
   stability: number
   due_at: string | null

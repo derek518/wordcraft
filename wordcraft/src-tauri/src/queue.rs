@@ -85,6 +85,9 @@ pub struct QueueItem {
     pub meaning: String,
     pub example_1: String,
     pub example_2: String,
+    /// Lv.5 拼写题的准入判据（决议 S10：仅 1–2 段核心词开放）。
+    /// 前端据此决定该词的题型上限，缺了它拼写题就无从限制。
+    pub frequency_band: i64,
     pub difficulty: f64,
     pub stability: f64,
     pub due_at: Option<String>,
@@ -97,28 +100,35 @@ pub struct QueueItem {
     pub source: QueueSource,
 }
 
-const WORD_COLS: &str = "w.id, w.word, w.phonetic, w.pos, w.meaning, w.example_1, w.example_2";
+const WORD_COLS: &str = "w.id, w.word, w.phonetic, w.pos, w.meaning, w.example_1, w.example_2, \
+                          w.frequency_band";
 const STATE_COLS: &str = "s.difficulty, s.stability, s.due_at, s.fsrs_state, s.app_state, \
                           s.reps, s.lapses, s.question_level, s.reinforce_streak";
 
+/// 按列名而非位置读取。
+///
+/// 位置索引在加列时会静默错位——把 `frequency_band` 插进 `WORD_COLS` 后，
+/// 后面每个 `row.get(n)` 都读到了邻居的值，且类型恰好兼容时连编译错误都没有。
+/// `words.rs::row_to_word` 一直用列名，此处对齐。
 fn row_to_item(row: &Row, source: QueueSource) -> rusqlite::Result<QueueItem> {
     Ok(QueueItem {
-        word_id: row.get(0)?,
-        word: row.get(1)?,
-        phonetic: row.get(2)?,
-        pos: row.get(3)?,
-        meaning: row.get(4)?,
-        example_1: row.get(5)?,
-        example_2: row.get(6)?,
-        difficulty: row.get(7)?,
-        stability: row.get(8)?,
-        due_at: row.get(9)?,
-        fsrs_state: row.get(10)?,
-        app_state: row.get(11)?,
-        reps: row.get(12)?,
-        lapses: row.get(13)?,
-        question_level: row.get(14)?,
-        reinforce_streak: row.get(15)?,
+        word_id: row.get("id")?,
+        word: row.get("word")?,
+        phonetic: row.get("phonetic")?,
+        pos: row.get("pos")?,
+        meaning: row.get("meaning")?,
+        example_1: row.get("example_1")?,
+        example_2: row.get("example_2")?,
+        frequency_band: row.get("frequency_band")?,
+        difficulty: row.get("difficulty")?,
+        stability: row.get("stability")?,
+        due_at: row.get("due_at")?,
+        fsrs_state: row.get("fsrs_state")?,
+        app_state: row.get("app_state")?,
+        reps: row.get("reps")?,
+        lapses: row.get("lapses")?,
+        question_level: row.get("question_level")?,
+        reinforce_streak: row.get("reinforce_streak")?,
         source,
     })
 }
@@ -167,13 +177,14 @@ fn take_new_words(conn: &Connection, limit: i64) -> Result<Vec<QueueItem>, Strin
     let rows = stmt
         .query_map([], |row| {
             Ok(QueueItem {
-                word_id: row.get(0)?,
-                word: row.get(1)?,
-                phonetic: row.get(2)?,
-                pos: row.get(3)?,
-                meaning: row.get(4)?,
-                example_1: row.get(5)?,
-                example_2: row.get(6)?,
+                word_id: row.get("id")?,
+                word: row.get("word")?,
+                phonetic: row.get("phonetic")?,
+                pos: row.get("pos")?,
+                meaning: row.get("meaning")?,
+                example_1: row.get("example_1")?,
+                example_2: row.get("example_2")?,
+                frequency_band: row.get("frequency_band")?,
                 difficulty: 0.0,
                 stability: 0.0,
                 due_at: None,

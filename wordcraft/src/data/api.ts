@@ -57,8 +57,13 @@ export const importWords = (payload: WordImport[]) =>
 export const getSessionQueue = (sessionType: SessionType, limit?: number) =>
   call<QueueItem[]>('get_session_queue', { sessionType, limit: limit ?? null })
 
-export const getDistractorPool = (wordId: number, pos: string, count: number) =>
-  call<string[]>('get_distractor_pool', { wordId, pos, count })
+/**
+ * 干扰项候选。返回内容随题型翻转：Lv.1 是中文释义（看英文选中文），
+ * Lv.2 以上是英文单词（看中文/听音/看例句选英文）。
+ * 词性与频段等挑选条件由后端自查，此处只需给出题型等级。
+ */
+export const getDistractorPool = (wordId: number, questionLevel: number, count: number) =>
+  call<string[]>('get_distractor_pool', { wordId, questionLevel, count })
 
 // ── 作答 ──────────────────────────
 

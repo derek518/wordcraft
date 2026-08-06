@@ -11,6 +11,7 @@ function newWord(overrides: Partial<QueueItem> = {}): QueueItem {
     meaning: '水晶',
     example_1: 'A glowing crystal.',
     example_2: '',
+    frequency_band: 1,
     difficulty: 0,
     stability: 0,
     due_at: null,

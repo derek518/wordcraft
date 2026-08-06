@@ -60,8 +60,6 @@ Windows 走 PowerShell + `System.Speech`，两个平台都是真实现而非 stu
 
 ---
 
-#### 存量债务剩余项
-
 #### M1 清除说明（T25 第一阶段）
 
 `scheduler.rs` 拆为 `scheduler/mod.rs`（Tauri 与数据库交互）与 `scheduler/window.rs`
@@ -73,7 +71,11 @@ Windows 走 PowerShell + `System.Speech`，两个平台都是真实现而非 stu
 
 **仍待补齐**：全屏检测（`get_user_busy_state`）与 platform trait 抽象。
 未接入前调度器不区分用户是否在全屏应用中，会照常弹出。
-其余 M2–M8 七项已全部清除并经实跑验证。
+
+---
+
+**存量债务 M1–M8 已全部清除。** 剩余工作是能力补全（全屏检测、TTS 预生成），
+不属于「假实现」——现有路径都真的执行了它们声称的事。
 
 ### 🟡 计划内 stub（尚未引入，T23 建立）
 

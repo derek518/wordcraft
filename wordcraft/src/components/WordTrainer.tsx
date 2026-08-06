@@ -44,6 +44,7 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
   const [totalXp, setTotalXp] = useState(0)
   const [answeredCount, setAnsweredCount] = useState(0)
   const [xpFloat, setXpFloat] = useState<{ xp: number; x: number; y: number } | null>(null)
+  const [audioError, setAudioError] = useState('')
 
   const startedAt = useRef(0)
   const cardRef = useRef<HTMLDivElement>(null)
@@ -179,9 +180,12 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
   const handlePlayAudio = async () => {
     if (!current) return
     try {
+      setAudioError('')
       await api.playWordAudio(current.word)
-    } catch {
-      // 发音失败不该打断答题；T19 接入真实 TTS 后此处改为提示不可用
+    } catch (e) {
+      // 发音失败不打断答题，但必须让用户看见——否则点了没反应，
+      // 分不清是「坏了」还是「本来就没声音」
+      setAudioError(e instanceof Error ? e.message : String(e))
     }
   }
 
@@ -309,6 +313,11 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
           >
             🔊 {current.phonetic}
           </button>
+          {audioError && (
+            <div className="text-xs text-wc-warning mt-2 break-words">
+              发音不可用：{audioError}
+            </div>
+          )}
         </div>
 
         <div

@@ -1,0 +1,130 @@
+[
+  {
+    "name": "草泥怪",
+    "card_type": "creature",
+    "rarity": 1,
+    "image_path": "/cards/creatures/creature_01.png",
+    "trivia": "史莱姆类生物的身体含水量超过 90%，与水母相当。",
+    "source": "原创生成 · scripts/cards/generate_creatures.py · CC0"
+  },
+  {
+    "name": "水泡精",
+    "card_type": "creature",
+    "rarity": 1,
+    "image_path": "/cards/creatures/creature_02.png",
+    "trivia": "水的表面张力能让小昆虫站在水面上行走。",
+    "source": "原创生成 · scripts/cards/generate_creatures.py · CC0"
+  },
+  {
+    "name": "火苗兽",
+    "card_type": "creature",
+    "rarity": 1,
+    "image_path": "/cards/creatures/creature_03.png",
+    "trivia": "火焰的颜色取决于温度：红色约 800°C，蓝色可达 1400°C。",
+    "source": "原创生成 · scripts/cards/generate_creatures.py · CC0"
+  },
+  {
+    "name": "石背龟",
+    "card_type": "creature",
+    "rarity": 1,
+    "image_path": "/cards/creatures/creature_04.png",
+    "trivia": "陆龟的甲壳由脊椎和肋骨演化融合而成，无法脱壳。",
+    "source": "原创生成 · scripts/cards/generate_creatures.py · CC0"
+  },
+  {
+    "name": "嫩芽兔",
+    "card_type": "creature",
+    "rarity": 1,
+    "image_path": "/cards/creatures/creature_05.png",
+    "trivia": "兔子的视野接近 360 度，但正前方有盲区。",
+    "source": "原创生成 · scripts/cards/generate_creatures.py · CC0"
+  },
+  {
+    "name": "寒露蝶",
+    "card_type": "creature",
+    "rarity": 1,
+    "image_path": "/cards/creatures/creature_06.png",
+    "trivia": "蝴蝶用脚上的感受器尝味道，而不是用口器。",
+    "source": "原创生成 · scripts/cards/generate_creatures.py · CC0"
+  },
+  {
+    "name": "电火虫",
+    "card_type": "creature",
+    "rarity": 1,
+    "image_path": "/cards/creatures/creature_07.png",
+    "trivia": "萤火虫的发光效率接近 100%，几乎不产生热量。",
+    "source": "原创生成 · scripts/cards/generate_creatures.py · CC0"
+  },
+  {
+    "name": "熔岩泥",
+    "card_type": "creature",
+    "rarity": 1,
+    "image_path": "/cards/creatures/creature_08.png",
+    "trivia": "熔岩的黏度可以相差百万倍，取决于二氧化硅含量。",
+    "source": "原创生成 · scripts/cards/generate_creatures.py · CC0"
+  },
+  {
+    "name": "霜翼蛾",
+    "card_type": "creature",
+    "rarity": 2,
+    "image_path": "/cards/creatures/creature_09.png",
+    "trivia": "雪花有六重对称，源于水分子的氢键角度。",
+    "source": "原创生成 · scripts/cards/generate_creatures.py · CC0"
+  },
+  {
+    "name": "雷角鹿",
+    "card_type": "creature",
+    "rarity": 2,
+    "image_path": "/cards/creatures/creature_10.png",
+    "trivia": "闪电通道温度可达太阳表面的五倍。",
+    "source": "原创生成 · scripts/cards/generate_creatures.py · CC0"
+  },
+  {
+    "name": "寒霜兽",
+    "card_type": "creature",
+    "rarity": 2,
+    "image_path": "/cards/creatures/creature_11.png",
+    "trivia": "北极狐的皮毛能在零下 40 度保持体温不流失。",
+    "source": "原创生成 · scripts/cards/generate_creatures.py · CC0"
+  },
+  {
+    "name": "深潜灵",
+    "card_type": "creature",
+    "rarity": 2,
+    "image_path": "/cards/creatures/creature_12.png",
+    "trivia": "海洋最深处的马里亚纳海沟压力超过一千个大气压。",
+    "source": "原创生成 · scripts/cards/generate_creatures.py · CC0"
+  },
+  {
+    "name": "岩翼龙",
+    "card_type": "creature",
+    "rarity": 2,
+    "image_path": "/cards/creatures/creature_13.png",
+    "trivia": "翼龙并非恐龙，它们属于独立的爬行动物支系。",
+    "source": "原创生成 · scripts/cards/generate_creatures.py · CC0"
+  },
+  {
+    "name": "星辉晶",
+    "card_type": "creature",
+    "rarity": 3,
+    "image_path": "/cards/creatures/creature_14.png",
+    "trivia": "石英晶体的压电效应是石英表走时精准的原理。",
+    "source": "原创生成 · scripts/cards/generate_creatures.py · CC0"
+  },
+  {
+    "name": "永冻核",
+    "card_type": "creature",
+    "rarity": 3,
+    "image_path": "/cards/creatures/creature_15.png",
+    "trivia": "冰有至少 19 种晶体结构，日常见到的只是其中一种。",
+    "source": "原创生成 · scripts/cards/generate_creatures.py · CC0"
+  },
+  {
+    "name": "熔金石",
+    "card_type": "creature",
+    "rarity": 3,
+    "image_path": "/cards/creatures/creature_16.png",
+    "trivia": "地球内核温度与太阳表面相当，约 5500°C。",
+    "source": "原创生成 · scripts/cards/generate_creatures.py · CC0"
+  }
+]

@@ -4,6 +4,7 @@
 
 use tauri::Manager;
 
+mod cards;
 mod commands;
 mod db;
 mod placement;
@@ -63,6 +64,10 @@ fn main() {
             placement::finalize_placement,
             // 平台能力
             platform::get_user_busy_state,
+            // 抽卡与图鉴
+            cards::draw_card,
+            cards::get_collection,
+            cards::mark_cards_seen,
             // 统计
             commands::stats::get_today_stats,
             commands::stats::get_overall_stats,

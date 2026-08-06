@@ -5,6 +5,7 @@ import type { OverallStats, Session, SessionType } from '../core/types'
 interface AdventureMapProps {
   onStartTraining: (type: SessionType) => void
   onOpenStats: () => void
+  onOpenAlbum: () => void
   stats: OverallStats | null
 }
 
@@ -23,7 +24,7 @@ const ZONES = [
   { key: 'ice', name: '永冬之巅', words: 500, unlocked: false, color: '#67e8f9' },
 ]
 
-export default function AdventureMap({ onStartTraining, onOpenStats, stats }: AdventureMapProps) {
+export default function AdventureMap({ onStartTraining, onOpenStats, onOpenAlbum, stats }: AdventureMapProps) {
   const [sessions, setSessions] = useState<Session[]>([])
 
   const loadSessions = useCallback(async () => {
@@ -148,6 +149,17 @@ export default function AdventureMap({ onStartTraining, onOpenStats, stats }: Ad
           className="flex-1 py-3 bg-wc-surface-2 border border-wc-border rounded-lg text-sm font-bold hover:border-wc-primary transition"
         >
           📊 战绩面板
+        </button>
+        <button
+          onClick={onOpenAlbum}
+          className="flex-1 py-3 bg-wc-surface-2 border border-wc-border rounded-lg text-sm font-bold hover:border-wc-primary transition relative"
+        >
+          🎴 水晶图鉴
+          {(stats?.draw_tickets ?? 0) > 0 && (
+            <span className="absolute top-2 right-2 px-1.5 py-0.5 text-xs rounded-full bg-wc-gold text-wc-bg font-mono">
+              {stats?.draw_tickets}
+            </span>
+          )}
         </button>
       </div>
     </div>

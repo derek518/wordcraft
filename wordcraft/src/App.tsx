@@ -3,12 +3,13 @@ import AdventureMap from './components/AdventureMap'
 import WordTrainer from './components/WordTrainer'
 import StatsPanel from './components/StatsPanel'
 import PlacementTest from './components/PlacementTest'
+import CardAlbum from './components/CardAlbum'
 import * as api from './data/api'
 import { levelProgress } from './core/progression'
 import type { OverallStats, SessionType } from './core/types'
 import './index.css'
 
-type View = 'map' | 'train' | 'stats' | 'placement'
+type View = 'map' | 'train' | 'stats' | 'placement' | 'album'
 
 export default function App() {
   const [view, setView] = useState<View>('map')
@@ -156,12 +157,14 @@ export default function App() {
           <AdventureMap
             onStartTraining={startTraining}
             onOpenStats={() => setView('stats')}
+            onOpenAlbum={() => setView('album')}
             stats={stats}
           />
         )}
         {view === 'train' && <WordTrainer sessionType={sessionType} onFinish={finishTraining} />}
         {view === 'stats' && <StatsPanel onBack={() => setView('map')} />}
         {view === 'placement' && <PlacementTest onFinish={finishTraining} />}
+        {view === 'album' && <CardAlbum onBack={() => setView('map')} />}
       </main>
 
       {showWelcome && (

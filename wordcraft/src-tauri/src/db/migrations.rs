@@ -32,6 +32,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "placement",
         sql: include_str!("migrations/003_placement.sql"),
     },
+    Migration {
+        version: 4,
+        name: "card_pool",
+        sql: include_str!("migrations/004_card_pool.sql"),
+    },
 ];
 
 /// 执行所有未应用的迁移，返回本次实际应用的版本号。
@@ -234,7 +239,7 @@ mod tests {
         let mut conn = in_memory_db();
 
         let first = run(&mut conn).expect("首次迁移失败");
-        assert_eq!(first, vec![1, 2, 3], "首次应用全部迁移");
+        assert_eq!(first, vec![1, 2, 3, 4], "首次应用全部迁移");
 
         let second = run(&mut conn).expect("重复迁移失败");
         assert!(second.is_empty(), "重复执行不应再应用任何迁移");

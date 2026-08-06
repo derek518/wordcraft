@@ -13,6 +13,9 @@ const VALID_SESSION_TYPES: [&str; 4] = ["morning", "noon", "evening", "free"];
 /// 每月「今日暂停」配额，spec F7。
 const MONTHLY_PAUSE_QUOTA: i64 = 2;
 
+/// 完成一个时段发放的抽卡券数（契约 §10.1）。
+const SESSION_TICKET: i64 = 1;
+
 #[derive(Debug, Serialize)]
 pub struct PostponeResult {
     pub remaining: i64,
@@ -51,6 +54,7 @@ pub struct SessionResult {
     pub xp_earned: i64,
     pub total_xp: i64,
     pub level: i64,
+    pub draw_tickets: i64,
 }
 
 #[tauri::command]
@@ -87,11 +91,17 @@ pub fn finish_session(
     // 结算页有 XP，回到主界面顶栏却仍是 0 —— 会话记了账，玩家没有。
     let (total_xp, level) = player_stats::add_xp(&conn, xp_earned)?;
 
+    // 契约 §10.1：完成一个时段发 1 张抽卡券。
+    // 「完美日」的额外一张由日终结算发放（progression::apply_outcome），
+    // 因为那要等三个时段都完成才能判定
+    let tickets = player_stats::add_draw_tickets(&conn, SESSION_TICKET)?;
+
     Ok(SessionResult {
         completed_count: session.completed_count,
         xp_earned,
         total_xp,
         level,
+        draw_tickets: tickets,
     })
 }
 

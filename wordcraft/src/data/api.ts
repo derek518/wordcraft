@@ -135,6 +135,38 @@ export const submitPlacementAnswer = (
 
 export const finalizePlacement = () => call<PlacementOutcome>('finalize_placement')
 
+// ── 抽卡与图鉴 ──────────────────────────
+
+export interface Card {
+  id: number
+  name: string
+  card_type: string
+  rarity: number
+  image_path: string
+  trivia: string
+  source: string
+}
+
+export interface DrawResult {
+  card: Card
+  is_first: boolean
+  count: number
+  tickets_left: number
+}
+
+export interface CollectionEntry {
+  card: Card
+  count: number
+  is_new: boolean
+  first_at: string | null
+}
+
+/** 券不足时后端返回 Err，此处照常抛出——静默失败会让用户以为按钮坏了 */
+export const drawCard = () => call<DrawResult>('draw_card')
+export const getCollection = () => call<CollectionEntry[]>('get_collection')
+export const markCardsSeen = (cardIds: number[]) =>
+  call<void>('mark_cards_seen', { cardIds })
+
 // ── 统计 ──────────────────────────
 
 export const getOverallStats = () => call<OverallStats>('get_overall_stats')

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import * as api from '../data/api'
 import { gradeAnswer } from '../core/fsrs'
 import { xpFor } from '../core/progression'
+import { playCorrect, playIncorrect, playSessionComplete, setSoundEnabled } from '../core/sound'
 import type { QueueItem, SessionType } from '../core/types'
 
 interface WordTrainerProps {
@@ -69,6 +70,11 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
   const load = useCallback(async () => {
     setPhase('loading')
     try {
+      // 静音设置在会话开始时读取一次——每题都查一次数据库没有意义，
+      // 用户不会在答题中途改设置
+      const sound = await api.getSetting('sound_enabled')
+      setSoundEnabled(sound !== 'false')
+
       const items = await api.getSessionQueue(sessionType)
       if (items.length === 0) {
         setErrorMessage('词库还没有可练习的词。先在冒险者手册中导入水晶图谱。')
@@ -101,6 +107,14 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
     setSelected(option)
     setIsCorrect(correct)
     setIsRevealed(true)
+
+    // 音效先于任何 await——spec F6 要求反馈 <100ms，
+    // 排在 IPC 之后就变成「延迟到网络往返之后才响」
+    if (correct) {
+      playCorrect(combo)
+    } else {
+      playIncorrect()
+    }
 
     const { dto, requeueInSession } = gradeAnswer({
       item: current,
@@ -154,6 +168,7 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
 
     try {
       if (sessionId !== null) await api.finishSession(sessionId, totalXp)
+      playSessionComplete()
       setPhase('complete')
     } catch (e) {
       setErrorMessage(e instanceof Error ? e.message : String(e))

@@ -6,6 +6,7 @@ use tauri::Manager;
 
 mod db;
 mod queue;
+mod review;
 mod scheduler;
 mod tts;
 mod fsrs_engine;
@@ -39,6 +40,7 @@ fn main() {
             db::legacy::set_setting,
             db::legacy::import_word_library,
             queue::get_session_queue,
+            review::commit_review,
             tts::play_word_audio,
             fsrs_engine::get_next_review_words,
             fsrs_engine::submit_review_result,

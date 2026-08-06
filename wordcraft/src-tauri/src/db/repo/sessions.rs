@@ -120,6 +120,24 @@ pub fn finish(
     Ok(())
 }
 
+/// 记录一次作答，会话进度 +1。
+///
+/// 进度随每题递增而非等到会话结束才写：决议 S13 把单场提到 20 词（约 4 分钟）后，
+/// 中途退出是常态而非边缘场景，已作答的部分必须留存。
+pub fn record_answer(conn: &Connection, id: i64) -> Result<(), String> {
+    let affected = conn
+        .execute(
+            "UPDATE sessions SET completed_count = completed_count + 1 WHERE id = ?1",
+            [id],
+        )
+        .map_err(|e| format!("更新会话 {id} 进度失败: {e}"))?;
+
+    if affected == 0 {
+        return Err(format!("会话 {id} 不存在"));
+    }
+    Ok(())
+}
+
 /// 延后一次，返回剩余可延后次数。
 ///
 /// 已达上限返回 `Err`——spec F1 规定第 4 次不可延后。

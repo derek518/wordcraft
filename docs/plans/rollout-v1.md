@@ -208,6 +208,20 @@ Phase 0 (地基)  ──> Phase 1 (数据层) ──┬──> Phase 2 (FSRS 引
 - **验证**：同一词在 learning 与 review 阶段呈现不同题型（spec F3 验收项）；band 3–5 的词永不出现拼写题
 - **DoD**：五种题型均可在自由练习中触发并正确提交 `question_type`
 
+### T32 · 音效系统（spec F6，2026-08-06 补入）
+
+> 编号后加：原 rollout 遗漏了 F6 的音效要求，而它属 P0。执行位置在 Phase 4，
+> 因为音效与答题反馈是同一个体验单元。
+
+- 新建 `src/core/sound.ts`：**用 Web Audio API 合成音效，不引入音频文件**
+  - 理由同 `public/assets/generate_assets.py` 的做法——代码生成的素材无版权风险、
+    零体积、可调参。项目素材约束要求原创或 CC0，合成音是最干净的解法
+  - 音色：答对为上行三音（C-E-G），答错为下行二音，升级为琶音，连击叠加音高
+- 接 `settings.sound_enabled`，静音时不创建 AudioContext
+- 首次交互时才初始化 AudioContext（浏览器自动播放策略要求）
+- **验证**：从点击选项到出声 <100ms（spec F6 验收项）；静音开关即时生效
+- **DoD**：实际听到音效；关闭后完全无声；连续答题无音频节点泄漏
+
 ---
 
 # Phase 5 · 弹窗调度与系统集成（可与 2/3/4 并行）

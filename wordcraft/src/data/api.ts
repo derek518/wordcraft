@@ -70,8 +70,15 @@ export const commitReview = (payload: ReviewCommitDto) =>
 export const startSession = (sessionType: SessionType, plannedCount: number) =>
   call<Session>('start_session', { sessionType, plannedCount })
 
+export interface SessionResult {
+  completed_count: number
+  xp_earned: number
+  total_xp: number
+  level: number
+}
+
 export const finishSession = (sessionId: number, xpEarned: number) =>
-  call<void>('finish_session', { sessionId, xpEarned })
+  call<SessionResult>('finish_session', { sessionId, xpEarned })
 
 export const getTodaySessions = () => call<Session[]>('get_today_sessions')
 

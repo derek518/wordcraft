@@ -45,8 +45,22 @@ pub fn start_session(
     sessions::start(&conn, &clock::today(), &session_type, planned_count, &clock::now())
 }
 
+#[derive(Debug, Serialize)]
+pub struct SessionResult {
+    pub completed_count: i64,
+    pub xp_earned: i64,
+    pub total_xp: i64,
+    pub level: i64,
+}
+
 #[tauri::command]
-pub fn finish_session(db: State<Db>, session_id: i64, xp_earned: i64) -> Result<(), String> {
+pub fn finish_session(
+    db: State<Db>,
+    session_id: i64,
+    xp_earned: i64,
+) -> Result<SessionResult, String> {
+    use crate::db::repo::player_stats;
+
     if xp_earned < 0 {
         return Err(format!("xp_earned 不能为负，收到 {xp_earned}"));
     }
@@ -57,13 +71,28 @@ pub fn finish_session(db: State<Db>, session_id: i64, xp_earned: i64) -> Result<
     let session = sessions::find_by_id(&conn, session_id)?
         .ok_or_else(|| format!("会话 {session_id} 不存在"))?;
 
+    if session.is_completed {
+        return Err(format!("会话 {session_id} 已结束，不能重复结算"));
+    }
+
     sessions::finish(
         &conn,
         session_id,
         session.completed_count,
         xp_earned,
         &clock::now(),
-    )
+    )?;
+
+    // XP 必须同时进玩家总账。只写 sessions.xp_earned 的话，用户答完一场看到
+    // 结算页有 XP，回到主界面顶栏却仍是 0 —— 会话记了账，玩家没有。
+    let (total_xp, level) = player_stats::add_xp(&conn, xp_earned)?;
+
+    Ok(SessionResult {
+        completed_count: session.completed_count,
+        xp_earned,
+        total_xp,
+        level,
+    })
 }
 
 #[tauri::command]

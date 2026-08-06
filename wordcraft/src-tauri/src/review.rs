@@ -443,6 +443,100 @@ mod tests {
         assert!(commit(&mut conn, &neg_stability).is_err());
     }
 
+    // ── 前后端载荷契约 ──────────────────────────
+
+    /// 用前端实际会发送的 JSON 验证反序列化。
+    ///
+    /// 这是 IPC 边界最脆弱的一环：`#[serde(rename_all = "camelCase")]` 与前端
+    /// `ReviewCommitDto` 的字段名必须逐个对上，嵌套的 before/after 也是。
+    /// 任何一处拼写不一致都会在运行时才暴露，而单测各自都是绿的。
+    #[test]
+    fn 前端载荷能被正确反序列化() {
+        // 与 src/core/types.ts 的 ReviewCommitDto 逐字段对应
+        let json = r#"{
+            "wordId": 42,
+            "sessionId": 7,
+            "questionType": 3,
+            "isCorrect": true,
+            "reactionMs": 4200,
+            "rating": 3,
+            "before": { "difficulty": 5.1, "stability": 2.5 },
+            "after": {
+                "difficulty": 4.9,
+                "stability": 7.3,
+                "dueAt": "2026-08-13T09:00:00Z",
+                "fsrsState": 2,
+                "reps": 4,
+                "lapses": 1
+            },
+            "appState": "review",
+            "questionLevel": 3,
+            "reinforceStreak": 0
+        }"#;
+
+        let dto: ReviewCommitDto = serde_json::from_str(json).expect("前端载荷反序列化失败");
+
+        assert_eq!(dto.word_id, 42);
+        assert_eq!(dto.session_id, Some(7));
+        assert_eq!(dto.question_type, 3);
+        assert!(dto.is_correct);
+        assert_eq!(dto.reaction_ms, 4200);
+        assert_eq!(dto.rating, 3);
+        assert!((dto.before.difficulty - 5.1).abs() < 1e-9);
+        assert!((dto.before.stability - 2.5).abs() < 1e-9);
+        assert!((dto.after.difficulty - 4.9).abs() < 1e-9);
+        assert!((dto.after.stability - 7.3).abs() < 1e-9);
+        assert_eq!(dto.after.due_at, "2026-08-13T09:00:00Z");
+        assert_eq!(dto.after.fsrs_state, 2);
+        assert_eq!(dto.after.reps, 4);
+        assert_eq!(dto.after.lapses, 1);
+        assert_eq!(dto.app_state, "review");
+        assert_eq!(dto.question_level, 3);
+        assert_eq!(dto.reinforce_streak, 0);
+
+        // 反序列化成功还不够——载荷必须能通过校验并真正落库
+        validate(&dto).expect("前端载荷未通过校验");
+    }
+
+    #[test]
+    fn 前端载荷可端到端落库() {
+        let mut conn = setup();
+        let json = r#"{
+            "wordId": 1, "sessionId": null, "questionType": 1,
+            "isCorrect": true, "reactionMs": 1800, "rating": 4,
+            "before": { "difficulty": 0, "stability": 0 },
+            "after": { "difficulty": 4.5, "stability": 3.1,
+                       "dueAt": "2026-08-09T09:00:00Z",
+                       "fsrsState": 1, "reps": 1, "lapses": 0 },
+            "appState": "review", "questionLevel": 2, "reinforceStreak": 0
+        }"#;
+        let dto: ReviewCommitDto = serde_json::from_str(json).unwrap();
+
+        commit(&mut conn, &dto).expect("前端载荷提交失败");
+
+        let state = word_states::get(&conn, 1).unwrap().unwrap();
+        assert_eq!(state.due_at, "2026-08-09T09:00:00Z");
+        assert_eq!(state.app_state, "review");
+        assert_eq!(review_logs::total_count(&conn).unwrap(), 1);
+    }
+
+    #[test]
+    fn 缺失字段的载荷被明确拒绝而非取默认值() {
+        // 少了 after.dueAt——若 serde 给了默认空串，词会从排队查询中消失
+        let json = r#"{
+            "wordId": 1, "sessionId": null, "questionType": 1,
+            "isCorrect": true, "reactionMs": 1800, "rating": 4,
+            "before": { "difficulty": 0, "stability": 0 },
+            "after": { "difficulty": 4.5, "stability": 3.1,
+                       "fsrsState": 1, "reps": 1, "lapses": 0 },
+            "appState": "review", "questionLevel": 2, "reinforceStreak": 0
+        }"#;
+        assert!(
+            serde_json::from_str::<ReviewCommitDto>(json).is_err(),
+            "缺字段的载荷应反序列化失败，而非静默填默认值"
+        );
+    }
+
     // ── mastered_at 推导 ──────────────────────────
 
     #[test]

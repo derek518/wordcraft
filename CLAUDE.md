@@ -44,6 +44,10 @@ cargo test               # 后端单测
 
 - **网络**：crates.io 的 sparse index 在此环境下延迟高，cargo 命令需要
   `CARGO_NET_RETRY=10 CARGO_HTTP_TIMEOUT=120`，否则会瞬时超时。
+- **macOS 上无法用 computer-use 操作 `tauri dev` 启动的窗口**：dev 模式跑的是
+  `target/debug/wordcraft` 裸二进制，没有 `.app` bundle，不在系统应用列表中。
+  需要真机 UI 验证时先 `npm run tauri build -- --debug --bundles app`，
+  再 `open src-tauri/target/debug/bundle/macos/WordCraft.app`。
 - **`rusqlite` 锁定在 0.37.x，不要升级**。0.40+ 依赖 `libsqlite3-sys` 0.38+，
   其 build.rs 使用了在 Rust 1.93 仍为 unstable 的 `cfg_select!`，编译直接失败。
   升级前需先确认工具链已稳定支持该特性。

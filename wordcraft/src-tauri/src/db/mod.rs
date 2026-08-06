@@ -7,13 +7,6 @@ pub mod clock;
 pub mod migrations;
 pub mod repo;
 
-/// T07 将删除此模块。当前保留以维持 command 可用性。
-/// 其内部为 JSON 文件存储与手写日期运算，见 MOCKS.md M4。
-///
-/// 注意：command 必须以 `db::legacy::xxx` 的完整路径注册——`tauri::generate_handler!`
-/// 依赖宏生成的隐藏项，`pub use` re-export 无法透传。
-pub mod legacy;
-
 use chrono::Utc;
 use rusqlite::Connection;
 use std::fs;
@@ -27,10 +20,6 @@ const LEGACY_JSON: &str = "wordcraft_data.json";
 /// 放入 Tauri State 的数据库句柄。
 ///
 /// `Connection` 不是 `Sync`，故用 `Mutex` 包装。桌面单用户场景下锁竞争可忽略。
-///
-/// 字段目前仅由 `init` 写入——T07 的 Repository 层会通过 `tauri::State<Db>`
-/// 取用它，届时读路径接通。
-#[allow(dead_code)]
 pub struct Db(pub Mutex<Connection>);
 
 /// 打开数据库、应用迁移，并归档遗留 JSON 数据。
@@ -61,8 +50,8 @@ pub fn init(app: &AppHandle) -> Result<Db, String> {
 
 /// 归档遗留 JSON，且只归档一次。
 ///
-/// 归档动作必须幂等：在 T07 删除 legacy 模块之前，legacy 的写路径仍可能重新
-/// 创建 JSON 文件；若不加标记，每次启动都会再生成一个 .bak，把数据目录堆满。
+/// 标记位使归档幂等。写入路径已随 legacy 模块一并删除，但升级安装的用户机器上
+/// 仍可能存在旧文件，故保留此逻辑。
 fn archive_legacy_json_once(dir: &Path, conn: &Connection) -> Result<(), String> {
     const FLAG: &str = "legacy_json_archived";
 

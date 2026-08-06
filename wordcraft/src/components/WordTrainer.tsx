@@ -1,179 +1,176 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { invoke } from '@tauri-apps/api/core'
+import * as api from '../data/api'
+import { gradeAnswer } from '../core/fsrs'
+import { xpFor } from '../core/progression'
+import type { QueueItem, SessionType } from '../core/types'
 
 interface WordTrainerProps {
-  sessionType: string
+  sessionType: SessionType
   onFinish: () => void
 }
 
-interface WordItem {
-  id: number
-  word: string
-  phonetic: string
-  meaning: string
-  pos: string
-  example_1: string
-  example_2: string
-}
-
-const SESSION_NAMES: Record<string, string> = {
+const SESSION_NAMES: Record<SessionType, string> = {
   morning: '晨曦之门',
   noon: '烈日之门',
   evening: '星夜之门',
   free: '自由探险',
 }
 
-const SESSION_COLORS: Record<string, string> = {
+const SESSION_COLORS: Record<SessionType, string> = {
   morning: 'from-orange-500 to-yellow-400',
   noon: 'from-yellow-500 to-amber-400',
   evening: 'from-indigo-500 to-purple-400',
   free: 'from-wc-primary to-wc-accent',
 }
 
+type Phase = 'loading' | 'error' | 'answering' | 'complete'
+
 export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps) {
-  const [words, setWords] = useState<WordItem[]>([])
-  const [currentIndex, setCurrentIndex] = useState(0)
+  const [phase, setPhase] = useState<Phase>('loading')
+  const [errorMessage, setErrorMessage] = useState('')
+  const [sessionId, setSessionId] = useState<number | null>(null)
+
+  const [queue, setQueue] = useState<QueueItem[]>([])
+  const [cursor, setCursor] = useState(0)
   const [options, setOptions] = useState<string[]>([])
-  const [selectedOption, setSelectedOption] = useState<string | null>(null)
+
+  const [selected, setSelected] = useState<string | null>(null)
   const [isRevealed, setIsRevealed] = useState(false)
   const [isCorrect, setIsCorrect] = useState(false)
-  const [startTime, setStartTime] = useState(0)
+
   const [combo, setCombo] = useState(0)
+  const [bestCombo, setBestCombo] = useState(0)
   const [totalXp, setTotalXp] = useState(0)
-  const [sessionComplete, setSessionComplete] = useState(false)
-  const [showXpFloat, setShowXpFloat] = useState<{ xp: number; x: number; y: number } | null>(null)
-  
+  const [answeredCount, setAnsweredCount] = useState(0)
+  const [xpFloat, setXpFloat] = useState<{ xp: number; x: number; y: number } | null>(null)
+
+  const startedAt = useRef(0)
   const cardRef = useRef<HTMLDivElement>(null)
 
-  const generateOptions = useCallback((word: WordItem) => {
-    // Simple distractor generation - in production this would use the database
-    const allMeanings = [
-      '能力，才能', '能够的', '关于', '在……上面', '接受',
-      '事故', '达到', '横过', '行动', '活跃的',
-      '活动', '实际上', '添加', '地址', '钦佩',
-      '成年人', '前进', '优势', '冒险', '广告',
-      '建议', '买得起', '害怕的', '在……之后', '下午',
-      '再一次', '反对', '年龄', '以前', '同意',
-      '空气', '机场', '活着的', '全部', '允许',
-      '几乎', '独自', '沿着', '已经', '也',
-      '虽然', '总是', '使惊奇', '在……之中', '数量',
-      '古代的', '生气的', '动物', '宣布', '另一个',
-    ]
+  const current = queue[cursor]
 
-    const otherMeanings = allMeanings.filter(m => m !== word.meaning)
-    const shuffled = otherMeanings.sort(() => Math.random() - 0.5).slice(0, 3)
-    const opts = [...shuffled, word.meaning].sort(() => Math.random() - 0.5)
-    setOptions(opts)
+  /**
+   * 组题。干扰项来自后端的同词性候选池——审计 D5 的硬编码释义数组已删除，
+   * 那个数组恰好是当时 52 个词的释义，词库一扩就全线失效。
+   */
+  const buildOptions = useCallback(async (item: QueueItem) => {
+    const pool = await api.getDistractorPool(item.word_id, item.pos, 3)
+    const choices = [...pool, item.meaning]
+    // Fisher-Yates 洗牌。不用 sort(() => Math.random() - 0.5)——那个比较器不满足
+    // 传递性，各引擎排序实现不同，分布明显偏斜
+    for (let i = choices.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[choices[i], choices[j]] = [choices[j], choices[i]]
+    }
+    setOptions(choices)
+    startedAt.current = Date.now()
   }, [])
 
-  const loadWords = useCallback(async () => {
+  const load = useCallback(async () => {
+    setPhase('loading')
     try {
-      const result = await invoke<WordItem[]>('get_due_words', {
-        limit: sessionType === 'free' ? 10 : 5,
-        sessionType
-      })
-      setWords(result)
-      if (result.length > 0) {
-        generateOptions(result[0])
-        setStartTime(Date.now())
+      const items = await api.getSessionQueue(sessionType)
+      if (items.length === 0) {
+        setErrorMessage('词库还没有可练习的词。先在冒险者手册中导入水晶图谱。')
+        setPhase('error')
+        return
       }
+      const session = await api.startSession(sessionType, items.length)
+      setSessionId(session.id)
+      setQueue(items)
+      setCursor(0)
+      await buildOptions(items[0])
+      setPhase('answering')
     } catch (e) {
-      console.error('Load words error:', e)
-      // Fallback: use local words
-      const { newbieZoneWords } = await import('../data/words')
-      const localWords = newbieZoneWords.slice(0, 5).map((w: any, i: number) => ({
-        id: i + 1,
-        word: w.word,
-        phonetic: w.phonetic,
-        meaning: w.meaning,
-        pos: w.pos,
-        example_1: w.example_1,
-        example_2: w.example_2,
-      }))
-      setWords(localWords)
-      if (localWords.length > 0) {
-        generateOptions(localWords[0])
-        setStartTime(Date.now())
-      }
+      // 不回退到本地假数据（审计 D6）——后端不可用必须让用户看见
+      setErrorMessage(e instanceof Error ? e.message : String(e))
+      setPhase('error')
     }
-  }, [sessionType, generateOptions])
+  }, [sessionType, buildOptions])
 
   useEffect(() => {
-    loadWords()
-  }, [loadWords])
+    load()
+  }, [load])
 
   const handleSelect = async (option: string) => {
-    if (isRevealed) return
-    
-    setSelectedOption(option)
-    const correct = option === currentWord?.meaning
+    if (isRevealed || !current) return
+
+    const reactionMs = Date.now() - startedAt.current
+    const correct = option === current.meaning
+
+    setSelected(option)
     setIsCorrect(correct)
     setIsRevealed(true)
-    
-    const reactionTime = Date.now() - startTime
-    
-    // Calculate rating based on reaction time and correctness
-    let rating = 1 // again
-    if (correct) {
-      if (reactionTime < 3000) rating = 4 // easy
-      else if (reactionTime < 8000) rating = 3 // good
-      else rating = 2 // hard
-      setCombo(c => c + 1)
-    } else {
-      setCombo(0)
+
+    const { dto, requeueInSession } = gradeAnswer({
+      item: current,
+      questionType: current.question_level,
+      isCorrect: correct,
+      reactionMs,
+      sessionId,
+    })
+
+    const gained = xpFor(dto.rating, correct ? combo : 0)
+    const nextCombo = correct ? combo + 1 : 0
+    setCombo(nextCombo)
+    setBestCombo((b) => Math.max(b, nextCombo))
+    setTotalXp((x) => x + gained)
+    setAnsweredCount((n) => n + 1)
+
+    if (cardRef.current && gained > 0) {
+      const rect = cardRef.current.getBoundingClientRect()
+      setXpFloat({ xp: gained, x: rect.left + rect.width / 2, y: rect.top })
+      setTimeout(() => setXpFloat(null), 1000)
     }
-    
-    // Submit to backend
-    if (currentWord) {
-      try {
-        const result = await invoke('submit_review_result', {
-          wordId: currentWord.id,
-          rating,
-          reactionMs: reactionTime,
-        })
-        const xp = (result as any)?.xp || 0
-        setTotalXp(p => p + xp)
-        
-        // Show XP float animation
-        if (cardRef.current && xp > 0) {
-          const rect = cardRef.current.getBoundingClientRect()
-          setShowXpFloat({ xp, x: rect.left + rect.width / 2, y: rect.top })
-          setTimeout(() => setShowXpFloat(null), 1000)
-        }
-      } catch (e) {
-        console.error('Submit review error:', e)
+
+    try {
+      await api.commitReview(dto)
+      // spec F2：答错的词当场排到队尾再考一次
+      if (requeueInSession) {
+        setQueue((q) => [...q, { ...current, app_state: dto.appState, reinforce_streak: dto.reinforceStreak }])
       }
+    } catch (e) {
+      setErrorMessage(e instanceof Error ? e.message : String(e))
+      setPhase('error')
     }
   }
 
-  const handleNext = () => {
-    if (currentIndex < words.length - 1) {
-      setCurrentIndex(i => i + 1)
-      setSelectedOption(null)
-      setIsRevealed(false)
-      setIsCorrect(false)
-      setStartTime(Date.now())
-      
-      const nextWord = words[currentIndex + 1]
-      generateOptions(nextWord)
-    } else {
-      setSessionComplete(true)
+  const handleNext = async () => {
+    setSelected(null)
+    setIsRevealed(false)
+    setIsCorrect(false)
+
+    if (cursor < queue.length - 1) {
+      const next = queue[cursor + 1]
+      setCursor((c) => c + 1)
+      try {
+        await buildOptions(next)
+      } catch (e) {
+        setErrorMessage(e instanceof Error ? e.message : String(e))
+        setPhase('error')
+      }
+      return
+    }
+
+    try {
+      if (sessionId !== null) await api.finishSession(sessionId, totalXp)
+      setPhase('complete')
+    } catch (e) {
+      setErrorMessage(e instanceof Error ? e.message : String(e))
+      setPhase('error')
     }
   }
 
   const handlePlayAudio = async () => {
-    if (!currentWord) return
+    if (!current) return
     try {
-      await invoke('play_word_audio', { word: currentWord.word })
-    } catch (e) {
-      console.error('Audio error:', e)
+      await api.playWordAudio(current.word)
+    } catch {
+      // 发音失败不该打断答题；T19 接入真实 TTS 后此处改为提示不可用
     }
   }
 
-  const currentWord = words[currentIndex]
-  const progress = words.length > 0 ? ((currentIndex + (isRevealed ? 1 : 0)) / words.length) * 100 : 0
-
-  if (words.length === 0) {
+  if (phase === 'loading') {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="text-center">
@@ -184,7 +181,33 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
     )
   }
 
-  if (sessionComplete) {
+  if (phase === 'error') {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center max-w-md">
+          <div className="text-4xl mb-4">🌫️</div>
+          <h2 className="text-xl font-bold mb-2">传送门无法开启</h2>
+          <p className="text-wc-text-muted text-sm mb-6 break-words">{errorMessage}</p>
+          <div className="flex gap-3 justify-center">
+            <button
+              onClick={load}
+              className="px-6 py-2.5 bg-gradient-to-r from-wc-primary to-wc-primary-bright rounded-lg font-bold hover:opacity-90 transition"
+            >
+              重试
+            </button>
+            <button
+              onClick={onFinish}
+              className="px-6 py-2.5 bg-wc-surface-2 border border-wc-border rounded-lg font-bold hover:border-wc-primary transition"
+            >
+              返回营地
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (phase === 'complete') {
     return (
       <div className="flex items-center justify-center min-h-[500px]">
         <div className="text-center pop-in">
@@ -194,7 +217,7 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div>
                 <div className="text-wc-text-muted">收集水晶</div>
-                <div className="text-xl font-bold text-wc-accent">{words.length} 颗</div>
+                <div className="text-xl font-bold text-wc-accent">{answeredCount} 颗</div>
               </div>
               <div>
                 <div className="text-wc-text-muted">获得 XP</div>
@@ -202,7 +225,7 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
               </div>
               <div>
                 <div className="text-wc-text-muted">最高连击</div>
-                <div className="text-xl font-bold text-wc-fire">{combo}</div>
+                <div className="text-xl font-bold text-wc-fire">{bestCombo}</div>
               </div>
               <div>
                 <div className="text-wc-text-muted">传送门</div>
@@ -210,7 +233,7 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
               </div>
             </div>
           </div>
-          <button 
+          <button
             onClick={onFinish}
             className="px-8 py-3 bg-gradient-to-r from-wc-primary to-wc-primary-bright rounded-lg font-bold hover:opacity-90 transition"
           >
@@ -221,34 +244,34 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
     )
   }
 
+  if (!current) return null
+
+  const progress = (cursor / queue.length) * 100
+
   return (
     <div className="max-w-lg mx-auto">
-      {/* Header */}
       <div className="flex items-center justify-between mb-4">
-        <button 
-          onClick={onFinish}
-          className="text-sm text-wc-text-muted hover:text-wc-text transition"
-        >
+        <button onClick={onFinish} className="text-sm text-wc-text-muted hover:text-wc-text transition">
           ← 返回
         </button>
-        <div className={`text-xs font-bold px-3 py-1 rounded-full bg-gradient-to-r ${SESSION_COLORS[sessionType]} text-white`}>
+        <div
+          className={`text-xs font-bold px-3 py-1 rounded-full bg-gradient-to-r ${SESSION_COLORS[sessionType]} text-white`}
+        >
           {SESSION_NAMES[sessionType]}
         </div>
         <div className="text-sm font-mono">
-          <span className="text-wc-accent">{currentIndex + 1}</span>
-          <span className="text-wc-text-muted">/{words.length}</span>
+          <span className="text-wc-accent">{cursor + 1}</span>
+          <span className="text-wc-text-muted">/{queue.length}</span>
         </div>
       </div>
 
-      {/* Progress Bar */}
       <div className="h-1.5 bg-wc-surface-2 rounded-full mb-6 overflow-hidden">
-        <div 
+        <div
           className="h-full bg-gradient-to-r from-wc-primary to-wc-accent rounded-full transition-all duration-500"
           style={{ width: `${progress}%` }}
         />
       </div>
 
-      {/* Combo Display */}
       {combo > 0 && (
         <div className="text-center mb-4">
           <span className="inline-flex items-center gap-1 px-3 py-1 bg-wc-fire/20 text-wc-fire rounded-full text-sm font-bold">
@@ -257,26 +280,34 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
         </div>
       )}
 
-      {/* Word Card */}
-      <div 
+      <div
         ref={cardRef}
         className={`bg-wc-surface border border-wc-border rounded-xl p-6 mb-6 transition-all ${
           isRevealed && !isCorrect ? 'shake' : ''
         }`}
       >
         <div className="text-center mb-6">
-          <div className="text-4xl font-bold mb-2 tracking-wide">{currentWord.word}</div>
-          <div 
+          <div className="text-4xl font-bold mb-2 tracking-wide">{current.word}</div>
+          <button
             className="text-wc-accent text-sm cursor-pointer hover:underline inline-flex items-center gap-1"
             onClick={handlePlayAudio}
           >
-            🔊 {currentWord.phonetic}
-          </div>
+            🔊 {current.phonetic}
+          </button>
         </div>
 
-        {/* Flip Animation for Reveal */}
-        <div className={`transition-all duration-500 ${isRevealed ? 'opacity-100 max-h-40' : 'opacity-0 max-h-0 overflow-hidden'}`}>
-          <div className={`p-4 rounded-lg mb-4 ${isCorrect ? 'bg-wc-success/10 border border-wc-success/30' : 'bg-wc-danger/10 border border-wc-danger/30'}`}>
+        <div
+          className={`transition-all duration-500 ${
+            isRevealed ? 'opacity-100 max-h-40' : 'opacity-0 max-h-0 overflow-hidden'
+          }`}
+        >
+          <div
+            className={`p-4 rounded-lg mb-4 ${
+              isCorrect
+                ? 'bg-wc-success/10 border border-wc-success/30'
+                : 'bg-wc-danger/10 border border-wc-danger/30'
+            }`}
+          >
             <div className="flex items-center gap-2 mb-2">
               <span className="text-xl">{isCorrect ? '✨' : '💫'}</span>
               <span className={`font-bold ${isCorrect ? 'text-wc-success' : 'text-wc-danger'}`}>
@@ -285,36 +316,35 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
             </div>
             <div className="text-sm">
               <span className="text-wc-text-muted">释义：</span>
-              <span className="font-bold">{currentWord.meaning}</span>
-              <span className="text-wc-text-muted ml-2">({currentWord.pos})</span>
+              <span className="font-bold">{current.meaning}</span>
+              <span className="text-wc-text-muted ml-2">({current.pos})</span>
             </div>
           </div>
-          
+
           <div className="text-sm text-wc-text-muted bg-wc-bg rounded-lg p-3">
-            <div className="mb-1">📝 {currentWord.example_1}</div>
-            <div>📝 {currentWord.example_2}</div>
+            <div className="mb-1">📝 {current.example_1}</div>
+            {current.example_2 && <div>📝 {current.example_2}</div>}
           </div>
         </div>
       </div>
 
-      {/* Options */}
       <div className="grid grid-cols-2 gap-3 mb-6">
         {options.map((option, i) => {
           let btnClass = 'bg-wc-surface-2 border-wc-border hover:border-wc-primary hover:bg-wc-surface'
-          
+
           if (isRevealed) {
-            if (option === currentWord.meaning) {
+            if (option === current.meaning) {
               btnClass = 'bg-wc-success/20 border-wc-success text-wc-success'
-            } else if (option === selectedOption) {
+            } else if (option === selected) {
               btnClass = 'bg-wc-danger/20 border-wc-danger text-wc-danger'
             } else {
               btnClass = 'bg-wc-surface-2 border-wc-border opacity-50'
             }
           }
-          
+
           return (
             <button
-              key={i}
+              key={`${option}-${i}`}
               onClick={() => handleSelect(option)}
               disabled={isRevealed}
               className={`p-4 rounded-lg border text-sm font-medium transition-all ${btnClass} ${
@@ -327,25 +357,20 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
         })}
       </div>
 
-      {/* Next Button */}
       {isRevealed && (
         <div className="text-center pop-in">
           <button
             onClick={handleNext}
             className="px-8 py-3 bg-gradient-to-r from-wc-primary to-wc-primary-bright rounded-lg font-bold hover:opacity-90 transition"
           >
-            {currentIndex < words.length - 1 ? '下一个水晶 →' : '完成冒险！'}
+            {cursor < queue.length - 1 ? '下一个水晶 →' : '完成冒险！'}
           </button>
         </div>
       )}
 
-      {/* XP Float Animation */}
-      {showXpFloat && (
-        <div 
-          className="float-text text-wc-gold text-xl"
-          style={{ left: showXpFloat.x, top: showXpFloat.y }}
-        >
-          +{showXpFloat.xp} XP
+      {xpFloat && (
+        <div className="float-text text-wc-gold text-xl" style={{ left: xpFloat.x, top: xpFloat.y }}>
+          +{xpFloat.xp} XP
         </div>
       )}
     </div>

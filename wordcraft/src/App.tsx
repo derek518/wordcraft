@@ -1,68 +1,88 @@
-import { useState, useEffect } from 'react'
-import { invoke } from '@tauri-apps/api/core'
+import { useState, useEffect, useCallback } from 'react'
 import AdventureMap from './components/AdventureMap'
 import WordTrainer from './components/WordTrainer'
 import StatsPanel from './components/StatsPanel'
+import * as api from './data/api'
+import { levelProgress } from './core/progression'
+import type { OverallStats, SessionType } from './core/types'
 import './index.css'
 
-type View = 'map' | 'train' | 'stats' | 'settings'
+type View = 'map' | 'train' | 'stats'
 
-function App() {
-  const [currentView, setCurrentView] = useState<View>('map')
-  const [sessionType, setSessionType] = useState<string>('morning')
-  const [overallStats, setOverallStats] = useState<any>(null)
-  const [isFirstRun, setIsFirstRun] = useState(false)
+export default function App() {
+  const [view, setView] = useState<View>('map')
+  const [sessionType, setSessionType] = useState<SessionType>('morning')
+  const [stats, setStats] = useState<OverallStats | null>(null)
+  const [showWelcome, setShowWelcome] = useState(false)
+  const [bootError, setBootError] = useState('')
 
-  useEffect(() => {
-    checkFirstRun()
-    loadStats()
+  const loadStats = useCallback(async () => {
+    try {
+      setStats(await api.getOverallStats())
+    } catch (e) {
+      setBootError(e instanceof Error ? e.message : String(e))
+    }
   }, [])
 
-  const checkFirstRun = async () => {
+  /**
+   * 首次启动：导入内置词库。
+   *
+   * TODO(T18): `src/data/words.ts` 是 52 词的占位词库（见 MOCKS.md M8），
+   * 由真实的人教版 + 外研版融合词库替换。
+   */
+  const bootstrap = useCallback(async () => {
     try {
-      const firstRun = await invoke<string>('get_setting', { key: 'first_run' })
-      if (firstRun === 'true') {
-        setIsFirstRun(true)
-        await importWords()
-        await invoke('set_setting', { key: 'first_run', value: 'false' })
+      const done = await api.getSetting('onboarding_done')
+      if (done === 'true') return
+
+      const { newbieZoneWords } = await import('./data/words')
+      const payload = newbieZoneWords.map((w) => ({
+        word: w.word,
+        phonetic: w.phonetic,
+        pos: w.pos,
+        meaning: w.meaning,
+        example_1: w.example_1,
+        example_2: w.example_2,
+        level: w.level,
+        frequency_band: w.frequency_band,
+        zone: 'newbie',
+        source_edition: '',
+      }))
+
+      const outcome = await api.importWords(payload)
+      if (outcome.rejected.length > 0) {
+        // 静默跳过会让某些词永远不出现，且无从察觉
+        console.warn('部分词条未通过校验：', outcome.rejected)
       }
-    } catch (e) {
-      console.error('Check first run error:', e)
-    }
-  }
 
-  const importWords = async () => {
-    const { newbieZoneWords } = await import('./data/words')
-    try {
-      const count = await invoke<number>('import_word_library', { words: newbieZoneWords })
-      console.log(`Imported ${count} words`)
+      await api.setSetting('onboarding_done', 'true')
+      setShowWelcome(true)
     } catch (e) {
-      console.error('Import words error:', e)
+      setBootError(e instanceof Error ? e.message : String(e))
     }
-  }
+  }, [])
 
-  const loadStats = async () => {
-    try {
-      const stats = await invoke('get_overall_stats')
-      setOverallStats(stats)
-    } catch (e) {
-      console.error('Load stats error:', e)
-    }
-  }
+  useEffect(() => {
+    void (async () => {
+      await bootstrap()
+      await loadStats()
+    })()
+  }, [bootstrap, loadStats])
 
-  const startTraining = (type: string) => {
+  const startTraining = (type: SessionType) => {
     setSessionType(type)
-    setCurrentView('train')
+    setView('train')
   }
 
   const finishTraining = () => {
-    setCurrentView('map')
-    loadStats()
+    setView('map')
+    void loadStats()
   }
+
+  const progress = stats ? levelProgress(stats.total_xp) : null
 
   return (
     <div className="min-h-screen bg-wc-bg text-wc-text">
-      {/* Header */}
       <header className="flex items-center justify-between px-6 py-3 bg-wc-surface border-b border-wc-border">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded bg-gradient-to-br from-wc-primary to-wc-accent flex items-center justify-center text-sm font-bold">
@@ -70,55 +90,53 @@ function App() {
           </div>
           <h1 className="text-lg font-bold tracking-wide">WordCraft</h1>
         </div>
-        
-        {overallStats && (
+
+        {stats && progress && (
           <div className="flex items-center gap-4 text-sm">
             <div className="flex items-center gap-1.5">
               <span className="text-wc-gold">⭐</span>
-              <span className="font-mono">Lv.{overallStats.level}</span>
+              <span className="font-mono">Lv.{progress.level}</span>
             </div>
             <div className="flex items-center gap-1.5">
               <span className="text-wc-accent">💎</span>
-              <span className="font-mono">{overallStats.total_xp} XP</span>
+              <span className="font-mono">{stats.total_xp} XP</span>
             </div>
             <div className="flex items-center gap-1.5">
               <span className="text-wc-fire">🔥</span>
-              <span className="font-mono">{overallStats.current_streak} 天</span>
+              <span className="font-mono">{stats.current_streak} 天</span>
             </div>
           </div>
         )}
       </header>
 
-      {/* Main Content */}
+      {bootError && (
+        <div className="mx-4 mt-4 p-3 rounded-lg bg-wc-danger/10 border border-wc-danger/30 text-sm">
+          <span className="font-bold text-wc-danger">数据加载失败：</span>
+          <span className="text-wc-text-muted ml-1 break-words">{bootError}</span>
+        </div>
+      )}
+
       <main className="p-4">
-        {currentView === 'map' && (
-          <AdventureMap 
+        {view === 'map' && (
+          <AdventureMap
             onStartTraining={startTraining}
-            onOpenStats={() => setCurrentView('stats')}
-            overallStats={overallStats}
+            onOpenStats={() => setView('stats')}
+            stats={stats}
           />
         )}
-        
-        {currentView === 'train' && (
-          <WordTrainer 
-            sessionType={sessionType}
-            onFinish={finishTraining}
-          />
-        )}
-        
-        {currentView === 'stats' && (
-          <StatsPanel onBack={() => setCurrentView('map')} />
-        )}
+        {view === 'train' && <WordTrainer sessionType={sessionType} onFinish={finishTraining} />}
+        {view === 'stats' && <StatsPanel onBack={() => setView('map')} />}
       </main>
 
-      {/* First Run Modal */}
-      {isFirstRun && (
+      {showWelcome && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
           <div className="bg-wc-surface border border-wc-border rounded-xl p-8 max-w-md w-full mx-4 pop-in">
             <h2 className="text-2xl font-bold mb-4 text-center">🎮 欢迎来到遗忘之境</h2>
             <p className="text-wc-text-muted mb-6 text-center leading-relaxed">
-              你是一位掉入遗忘之境的冒险者。<br/>
-              收集词汇水晶，击败遗忘魔王，<br/>
+              你是一位掉入遗忘之境的冒险者。
+              <br />
+              收集词汇水晶，击败遗忘魔王，
+              <br />
               建造属于你的家园！
             </p>
             <div className="space-y-3 mb-6">
@@ -128,15 +146,15 @@ function App() {
               </div>
               <div className="flex items-center gap-3 text-sm">
                 <span className="text-wc-accent text-lg">💎</span>
-                <span>每次只需 90 秒，3-5 个单词</span>
+                <span>答对越快，水晶越亮</span>
               </div>
               <div className="flex items-center gap-3 text-sm">
                 <span className="text-wc-gold text-lg">🏠</span>
                 <span>收集的水晶可以用来建造家园</span>
               </div>
             </div>
-            <button 
-              onClick={() => setIsFirstRun(false)}
+            <button
+              onClick={() => setShowWelcome(false)}
               className="w-full py-3 bg-gradient-to-r from-wc-primary to-wc-primary-bright rounded-lg font-bold hover:opacity-90 transition"
             >
               开始冒险！
@@ -147,5 +165,3 @@ function App() {
     </div>
   )
 }
-
-export default App

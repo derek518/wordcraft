@@ -4,12 +4,12 @@
 
 use tauri::Manager;
 
+mod commands;
 mod db;
 mod queue;
 mod review;
 mod scheduler;
 mod tts;
-mod fsrs_engine;
 
 #[cfg(test)]
 mod test_support;
@@ -31,19 +31,32 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            // TODO(T07): 以下 legacy command 由 SQLite Repository 实现替换，见 MOCKS.md M4
-            db::legacy::get_due_words,
-            db::legacy::update_word_review,
-            db::legacy::get_today_stats,
-            db::legacy::get_overall_stats,
-            db::legacy::get_setting,
-            db::legacy::set_setting,
-            db::legacy::import_word_library,
+            // 词库与排队
+            commands::library::import_words,
+            commands::library::search_words,
+            commands::library::get_distractor_pool,
             queue::get_session_queue,
+            // 作答
             review::commit_review,
+            // 会话生命周期
+            commands::session::start_session,
+            commands::session::finish_session,
+            commands::session::get_today_sessions,
+            commands::session::postpone_session,
+            commands::session::mark_session_eligible,
+            commands::session::get_daily_record,
+            commands::session::activate_daily_pause,
+            // 统计
+            commands::stats::get_today_stats,
+            commands::stats::get_overall_stats,
+            commands::stats::get_mastery_distribution,
+            commands::stats::get_heatmap,
+            commands::stats::export_data_json,
+            // 设置
+            commands::config::get_setting,
+            commands::config::set_setting,
+            // 平台能力
             tts::play_word_audio,
-            fsrs_engine::get_next_review_words,
-            fsrs_engine::submit_review_result,
             scheduler::get_next_session_time,
             scheduler::trigger_popup_now,
         ])

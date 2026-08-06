@@ -13,7 +13,7 @@
 
 | # | 位置 | 问题 | 清除任务 | 状态 |
 |---|---|---|---|---|
-| M1 | `src-tauri/src/scheduler.rs` | `start_scheduler` 仅 `sleep(60)` 死循环；`get_next_session_time` 硬编码返回 `"09:00"`/60 分钟；`trigger_popup_now` 直接 `Ok(())` | **T25** | 待清除 |
+| M1 | `src-tauri/src/scheduler.rs` | `start_scheduler` 仅 `sleep(60)` 死循环；`get_next_session_time` 硬编码返回 `"09:00"`/60 分钟；`trigger_popup_now` 直接 `Ok(())` | T25 | ✅ **已清除** |
 | M2 | `src-tauri/src/tts.rs` | `play_word_audio` 创建目录后直接 `Ok(())`，从不发声 | T19 | ✅ **已清除** |
 | M3 | `src-tauri/src/fsrs_engine.rs` | 未使用任何 FSRS 库；`generate_options` 返回硬编码 `"选项A/B/C/D"` | T10 | ✅ **已清除** |
 | M4 | `src-tauri/src/db/legacy.rs` | JSON 文件存储替代 SQLite；手写日期函数（`86464` typo，85% 日期算错）；`add_days` 忽略天数参数 | T10 | ✅ **已清除** |
@@ -62,7 +62,17 @@ Windows 走 PowerShell + `System.Speech`，两个平台都是真实现而非 stu
 
 #### 存量债务剩余项
 
-**M1（scheduler 空壳）是唯一未清除项**，随 T25 弹窗调度实现处理。
+#### M1 清除说明（T25 第一阶段）
+
+`scheduler.rs` 拆为 `scheduler/mod.rs`（Tauri 与数据库交互）与 `scheduler/window.rs`
+（纯时间推算，14 个测试覆盖跨天、窗口边界、已完成跳过）。
+
+- `get_next_session_time` 按 `session_windows` 配置真实计算，跳过当日已完成时段
+- `start_scheduler` 每 30 秒轮询，进入时段窗口即弹出主窗口并标记 eligible
+- `trigger_popup_now` 真实显示窗口，失败上报而非静默 `Ok(())`
+
+**仍待补齐**：全屏检测（`get_user_busy_state`）与 platform trait 抽象。
+未接入前调度器不区分用户是否在全屏应用中，会照常弹出。
 其余 M2–M8 七项已全部清除并经实跑验证。
 
 ### 🟡 计划内 stub（尚未引入，T23 建立）
@@ -81,7 +91,7 @@ Windows 走 PowerShell + `System.Speech`，两个平台都是真实现而非 stu
 | Phase 1–2（T06–T10） | M3, M4, M5, M6, M7 | ✅ 全部清除 |
 | Phase 3（T19） | M2 | ✅ 已清除 |
 | Phase 3（T18） | M8 | ✅ 已清除 |
-| Phase 5（T25） | M1 | 待办 |
+| Phase 5（T25） | M1 | ✅ 已清除 |
 
 **Phase 6 结束时本表「存量债务」区必须清空。** 若届时仍有残留，不得进入 spec M1 MVP 验收。
 

@@ -1,0 +1,66 @@
+[
+  {
+    "name": "星月夜",
+    "card_type": "painting",
+    "rarity": 3,
+    "image_path": "/cards/paintings/painting_01.png",
+    "trivia": "梵高在圣雷米精神病院期间画下它，画中村庄是凭记忆虚构的。",
+    "source": "Wikimedia Commons · Public domain · https://commons.wikimedia.org/wiki/File:Van_Gogh_-_Starry_Night_-_Google_Art_Project.jpg"
+  },
+  {
+    "name": "神奈川冲浪里",
+    "card_type": "painting",
+    "rarity": 3,
+    "image_path": "/cards/paintings/painting_02.png",
+    "trivia": "画中远处的小山是富士山；这幅浮世绘曾影响德彪西创作交响诗《海》。",
+    "source": "Wikimedia Commons · Public domain · https://commons.wikimedia.org/wiki/File:Great_Wave_off_Kanagawa2.jpg"
+  },
+  {
+    "name": "呐喊",
+    "card_type": "painting",
+    "rarity": 3,
+    "image_path": "/cards/paintings/painting_03.png",
+    "trivia": "蒙克说灵感来自一次散步时「听见穿过自然的无尽呐喊」。",
+    "source": "Wikimedia Commons · Public domain · https://commons.wikimedia.org/wiki/File:Edvard_Munch,_1893,_The_Scream,_oil,_tempera_and_pastel_on_cardboard,_91_x_73_cm,_National_Gallery_of_Norway.jpg"
+  },
+  {
+    "name": "戴珍珠耳环的少女",
+    "card_type": "painting",
+    "rarity": 2,
+    "image_path": "/cards/paintings/painting_04.png",
+    "trivia": "研究认为那颗「珍珠」可能只是抛光的锡，真珍珠不会有这么大。",
+    "source": "Wikimedia Commons · Public domain · https://commons.wikimedia.org/wiki/File:1665_Girl_with_a_Pearl_Earring.jpg"
+  },
+  {
+    "name": "向日葵",
+    "card_type": "painting",
+    "rarity": 2,
+    "image_path": "/cards/paintings/painting_05.png",
+    "trivia": "梵高画了至少 11 幅向日葵，用来装饰高更来访时的房间。",
+    "source": "Wikimedia Commons · Public domain · https://commons.wikimedia.org/wiki/File:Vincent_Willem_van_Gogh_127.jpg"
+  },
+  {
+    "name": "大碗岛的星期天下午",
+    "card_type": "painting",
+    "rarity": 2,
+    "image_path": "/cards/paintings/painting_06.png",
+    "trivia": "修拉用点彩法画了两年，颜色由观者的眼睛在视网膜上混合。",
+    "source": "Wikimedia Commons · Public domain · https://commons.wikimedia.org/wiki/File:A_Sunday_on_La_Grande_Jatte,_Georges_Seurat,_1884.jpg"
+  },
+  {
+    "name": "睡莲",
+    "card_type": "painting",
+    "rarity": 1,
+    "image_path": "/cards/paintings/painting_07.png",
+    "trivia": "莫奈晚年患白内障，视野偏黄，这改变了他后期作品的色调。",
+    "source": "Wikimedia Commons · Public domain · https://commons.wikimedia.org/wiki/File:Claude_Monet_-_Water_Lilies_-_1906,_Ryerson.jpg"
+  },
+  {
+    "name": "拾穗者",
+    "card_type": "painting",
+    "rarity": 1,
+    "image_path": "/cards/paintings/painting_08.png",
+    "trivia": "拾穗是当时法律赋予穷人的权利：允许在收割后捡拾遗落的麦穗。",
+    "source": "Wikimedia Commons · Public domain · https://commons.wikimedia.org/wiki/File:Jean-Fran%C3%A7ois_Millet_(II)_013.jpg"
+  }
+]

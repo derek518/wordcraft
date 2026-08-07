@@ -30,3 +30,10 @@ __pycache__/
 # 密钥文件，禁止入库
 .env
 .env.local
+
+# 构建产物：Python venv 与预生成音频
+.venv/
+# 3657 个 mp3 约 38MB。二进制文件会让仓库永久膨胀，且每次重新生成
+# 都产生全新 blob。音频是构建产物，由 scripts/tts/pregenerate.py 产出，
+# 打包前执行即可
+wordcraft/public/audio/

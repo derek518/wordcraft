@@ -35,14 +35,68 @@ fn validate_word(word: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// 预生成音频的缓存路径。
-pub fn cache_path(app: &AppHandle, word: &str) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("获取应用数据目录失败: {e}"))?
-        .join("audio_cache");
-    Ok(dir.join(format!("{}.mp3", word.to_lowercase())))
+/// 预生成音频的查找路径，按优先级排列。
+///
+/// 两个来源：随包分发的 `audio/`（构建时由 scripts/tts/pregenerate.py 产出）
+/// 与用户数据目录下的 `audio_cache/`（预留给运行时补齐）。
+/// 前者优先——随包的那份经过校验，运行时缓存可能是半截文件。
+pub fn cache_candidates(app: &AppHandle, word: &str) -> Vec<PathBuf> {
+    let name = format!("{}.mp3", word.to_lowercase());
+    let mut paths = Vec::new();
+
+    if let Ok(resource) = app.path().resource_dir() {
+        paths.push(resource.join("audio").join(&name));
+    }
+    if let Ok(data) = app.path().app_data_dir() {
+        paths.push(data.join("audio_cache").join(&name));
+    }
+    paths
+}
+
+/// 找到第一个可用的缓存文件。
+///
+/// 校验非空而非只看存在：中断的下载会留下 0 字节文件，
+/// 播放器对着它不会报错，只是没有声音——那正是最难排查的一类故障。
+fn find_cached(app: &AppHandle, word: &str) -> Option<PathBuf> {
+    cache_candidates(app, word).into_iter().find(|p| {
+        p.metadata().map(|m| m.len() >= 512).unwrap_or(false)
+    })
+}
+
+/// 播放本地音频文件。
+#[cfg(target_os = "macos")]
+fn spawn_playback(path: &PathBuf) -> Result<Child, String> {
+    Command::new("/usr/bin/afplay")
+        .arg(path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("启动 afplay 失败: {e}"))
+}
+
+#[cfg(target_os = "windows")]
+fn spawn_playback(path: &PathBuf) -> Result<Child, String> {
+    // 走 WMP COM 对象而非 SoundPlayer——后者只认 wav，而预生成的是 mp3。
+    // 路径经环境变量传入，不拼进脚本文本（同 spawn_speech 的理由）
+    const SCRIPT: &str = "\
+        $p = New-Object -ComObject WMPlayer.OCX; \
+        $m = $p.newMedia($env:WORDCRAFT_AUDIO_PATH); \
+        $p.currentPlaylist.appendItem($m); \
+        $p.controls.play(); \
+        Start-Sleep -Milliseconds ([int]$m.duration * 1000 + 300)";
+
+    Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", SCRIPT])
+        .env("WORDCRAFT_AUDIO_PATH", path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("启动音频播放失败: {e}"))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn spawn_playback(_path: &PathBuf) -> Result<Child, String> {
+    Err("当前平台没有可用的音频播放后端".to_string())
 }
 
 // ─────────────────────────────────────────────
@@ -99,15 +153,12 @@ fn spawn_speech(_word: &str) -> Result<Child, String> {
 pub fn play_word_audio(app: AppHandle, word: String) -> Result<(), String> {
     validate_word(&word)?;
 
-    // 预生成缓存命中时应直接播放文件（T19 剩余部分）。缓存尚未生成，
-    // 此处先记录命中情况，便于后续接入时确认路径正确
-    if let Ok(path) = cache_path(&app, &word) {
-        if path.exists() {
-            log::debug!("音频缓存命中但播放路径尚未接入: {}", path.display());
-        }
-    }
-
-    let child = spawn_speech(&word)?;
+    // 优先播放预生成音频：神经网络语音明显优于系统合成，且所有用户听到
+    // 同一个发音。缺失时降级到实时合成——两条路径都真的会出声
+    let child = match find_cached(&app, &word) {
+        Some(path) => spawn_playback(&path)?,
+        None => spawn_speech(&word)?,
+    };
 
     // 回收子进程并检查退出码。`spawn` 成功只说明命令存在——音色缺失、
     // 音频设备被占用都会让进程立刻非零退出，而调用方已经拿到 Ok 了。

@@ -174,6 +174,20 @@ export const getTodayStats = () => call<DayStats>('get_today_stats')
 export const getMasteryDistribution = () =>
   call<MasteryDistribution>('get_mastery_distribution')
 
+// ── 区域进度 ──────────────────────────
+
+export interface ZoneProgress {
+  key: string
+  name: string
+  total: number
+  learned: number
+  unlocked: boolean
+  required_level: number
+}
+
+/** 词数与解锁状态一律现查——前端硬编码过一次，六个数字里五个是错的 */
+export const getZoneProgress = () => call<ZoneProgress[]>('get_zone_progress')
+
 // ── 设置 ──────────────────────────
 
 export const getSetting = (key: string) => call<string | null>('get_setting', { key })

@@ -15,24 +15,29 @@ const PORTALS: { key: SessionType; name: string; icon: string; time: string; col
   { key: 'evening', name: '星夜之门', icon: '🌙', time: '19:00-21:00', color: 'from-indigo-400 to-purple-300' },
 ]
 
-const ZONES = [
-  { key: 'newbie', name: '新手村', words: 50, unlocked: true, color: '#e2e8f0' },
-  { key: 'grass', name: '清风平原', words: 200, unlocked: false, color: '#4ade80' },
-  { key: 'water', name: '蓝水湖泊', words: 300, unlocked: false, color: '#3b82f6' },
-  { key: 'fire', name: '赤焰山脉', words: 500, unlocked: false, color: '#ef4444' },
-  { key: 'thunder', name: '雷霆峡谷', words: 500, unlocked: false, color: '#a855f7' },
-  { key: 'ice', name: '永冬之巅', words: 500, unlocked: false, color: '#67e8f9' },
-]
+/** 区域配色。词数与解锁状态来自后端，这里只留视觉信息 */
+const ZONE_COLORS: Record<string, string> = {
+  newbie: '#e2e8f0',
+  grass: '#4ade80',
+  water: '#3b82f6',
+  fire: '#ef4444',
+  thunder: '#a855f7',
+  ice: '#67e8f9',
+}
 
 export default function AdventureMap({ onStartTraining, onOpenStats, onOpenAlbum, stats }: AdventureMapProps) {
   const [sessions, setSessions] = useState<Session[]>([])
+  const [zones, setZones] = useState<api.ZoneProgress[]>([])
 
   const loadSessions = useCallback(async () => {
     try {
-      setSessions(await api.getTodaySessions())
+      const [s, z] = await Promise.all([api.getTodaySessions(), api.getZoneProgress()])
+      setSessions(s)
+      setZones(z)
     } catch {
-      // 会话状态拿不到时按「未完成」渲染，不阻断进入训练
+      // 拿不到时按空渲染，不阻断进入训练
       setSessions([])
+      setZones([])
     }
   }, [])
 
@@ -112,27 +117,50 @@ export default function AdventureMap({ onStartTraining, onOpenStats, onOpenAlbum
         <h2 className="text-sm font-bold text-wc-text-muted uppercase tracking-wider mb-3">冒险地图</h2>
         <div className="bg-wc-surface border border-wc-border rounded-xl p-4">
           <div className="grid grid-cols-2 gap-3">
-            {ZONES.map((zone) => (
-              <div
-                key={zone.key}
-                className={`rounded-lg p-3 border transition-all ${
-                  zone.unlocked
-                    ? 'border-wc-border bg-wc-surface-2'
-                    : 'border-wc-border/50 bg-wc-surface/50 opacity-60'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-bold">{zone.name}</span>
-                  <span
-                    className="w-3 h-3 rounded-full"
-                    style={{ backgroundColor: zone.unlocked ? zone.color : '#475569' }}
-                  />
+            {zones.map((zone) => {
+              const pct = zone.total > 0 ? (zone.learned / zone.total) * 100 : 0
+              return (
+                <div
+                  key={zone.key}
+                  className={`rounded-lg p-3 border transition-all ${
+                    zone.unlocked
+                      ? 'border-wc-border bg-wc-surface-2'
+                      : 'border-wc-border/50 bg-wc-surface/50 opacity-60'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-bold">{zone.name}</span>
+                    <span
+                      className="w-3 h-3 rounded-full"
+                      style={{
+                        backgroundColor: zone.unlocked ? ZONE_COLORS[zone.key] : '#475569',
+                      }}
+                    />
+                  </div>
+                  {zone.unlocked ? (
+                    <>
+                      <div className="text-xs text-wc-text-muted mb-1.5">
+                        {zone.learned} / {zone.total} 词
+                      </div>
+                      <div className="h-1.5 bg-wc-bg rounded-full overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all"
+                          style={{
+                            width: `${pct}%`,
+                            backgroundColor: ZONE_COLORS[zone.key],
+                          }}
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    // 明示解锁条件而非只显示一把锁——阿斯伯格用户需要「可预测的全貌」
+                    <div className="text-xs text-wc-text-muted">
+                      🔒 Lv.{zone.required_level} 解锁
+                    </div>
+                  )}
                 </div>
-                <div className="text-xs text-wc-text-muted">
-                  {zone.unlocked ? `${zone.words} 词` : '🔒 被迷雾笼罩'}
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </div>
       </div>

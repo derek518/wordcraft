@@ -7,3 +7,4 @@ pub mod config;
 pub mod library;
 pub mod session;
 pub mod stats;
+pub mod zones;

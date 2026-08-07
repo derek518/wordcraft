@@ -74,6 +74,7 @@ fn main() {
             commands::stats::get_mastery_distribution,
             commands::stats::get_heatmap,
             commands::stats::export_data_json,
+            commands::zones::get_zone_progress,
             // 设置
             commands::config::get_setting,
             commands::config::set_setting,

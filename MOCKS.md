@@ -90,8 +90,25 @@ Windows 走 PowerShell + `System.Speech`，两个平台都是真实现而非 stu
 整个提醒功能无法验证），但真实忙碌状态会跳过且**不标记 eligible**，
 因为用户从未获得那次机会（决议 S6）。
 
-`windows_impl.rs` **无法在开发机验证**。首次在 Windows 上运行必须实测：
-打开全屏游戏，确认返回 `FullScreenD3D` 而非 `Normal`。
+#### `windows_impl.rs` 的验证边界
+
+整个项目无法交叉编译（`libsqlite3-sys` 的 bundled SQLite 要用 MSVC 编译 C 代码），
+但该文件只依赖 windows crate，可单独摘出来做类型检查：
+
+```bash
+bash scripts/check_windows_impl.sh
+```
+
+**已验证**（类型检查通过）：`SHQueryUserNotificationState` 导入路径、
+`QUNS_*` 常量名、返回值处理、unsafe 用法。
+
+**未验证**（只能在 Windows 上实测）：
+
+1. 打开全屏游戏 → `get_user_busy_state` 应返回 `FullScreenD3D`
+2. 时段窗口内处于全屏 → 日志出现「用户处于 FullScreenD3D，本轮跳过」，
+   且 `daily_records.eligible_count` **不增加**（决议 S6：不惩罚未获得的机会）
+3. 退出全屏后仍在窗口内 → 弹窗正常出现
+4. 锁屏状态 → 返回 `Busy` 而非 `Normal`
 
 > S1 是本清单中唯一允许长期存在的 stub。它的正当性在于：开发机为 macOS，而 `SHQueryUserNotificationState` 是 Windows 专有 API。
 > 它之所以安全，是因为返回 `Unknown` 强制调用方显式处理——**能力缺失无法伪装成一切正常**。这正是审计 M6 那类 silent fallback 的反面。

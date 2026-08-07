@@ -4,12 +4,13 @@ import WordTrainer from './components/WordTrainer'
 import StatsPanel from './components/StatsPanel'
 import PlacementTest from './components/PlacementTest'
 import CardAlbum from './components/CardAlbum'
+import SettingsPanel from './components/SettingsPanel'
 import * as api from './data/api'
 import { levelProgress } from './core/progression'
 import type { OverallStats, SessionType } from './core/types'
 import './index.css'
 
-type View = 'map' | 'train' | 'stats' | 'placement' | 'album'
+type View = 'map' | 'train' | 'stats' | 'placement' | 'album' | 'settings'
 
 export default function App() {
   const [view, setView] = useState<View>('map')
@@ -107,8 +108,9 @@ export default function App() {
           <h1 className="text-lg font-bold tracking-wide">WordCraft</h1>
         </div>
 
+        <div className="flex items-center gap-4 text-sm">
         {stats && progress && (
-          <div className="flex items-center gap-4 text-sm">
+          <>
             <div className="flex items-center gap-1.5">
               <span className="text-wc-gold">⭐</span>
               <span className="font-mono">Lv.{progress.level}</span>
@@ -121,8 +123,16 @@ export default function App() {
               <span className="text-wc-fire">🔥</span>
               <span className="font-mono">{stats.current_streak} 天</span>
             </div>
-          </div>
+          </>
         )}
+          <button
+            onClick={() => setView('settings')}
+            className="text-wc-text-muted hover:text-wc-text transition text-lg"
+            title="设置"
+          >
+            ⚙️
+          </button>
+        </div>
       </header>
 
       {bootError && (
@@ -165,6 +175,7 @@ export default function App() {
         {view === 'stats' && <StatsPanel onBack={() => setView('map')} />}
         {view === 'placement' && <PlacementTest onFinish={finishTraining} />}
         {view === 'album' && <CardAlbum onBack={() => setView('map')} />}
+        {view === 'settings' && <SettingsPanel onBack={() => setView('map')} />}
       </main>
 
       {showWelcome && (

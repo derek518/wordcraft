@@ -6,6 +6,7 @@ interface AdventureMapProps {
   onStartTraining: (type: SessionType) => void
   onOpenStats: () => void
   onOpenAlbum: () => void
+  onOpenHomestead: () => void
   stats: OverallStats | null
 }
 
@@ -54,7 +55,7 @@ const ELEMENT_COLORS: Record<string, { bg: string; glow: string; text: string }>
   ice: { bg: '#22d3ee', glow: 'rgba(103, 232, 249, 0.4)', text: '#67e8f9' },
 }
 
-export default function AdventureMap({ onStartTraining, onOpenStats, onOpenAlbum, stats }: AdventureMapProps) {
+export default function AdventureMap({ onStartTraining, onOpenStats, onOpenAlbum, onOpenHomestead, stats }: AdventureMapProps) {
   const [sessions, setSessions] = useState<Session[]>([])
   const [zones, setZones] = useState<api.ZoneProgress[]>([])
   const [hoveredPortal, setHoveredPortal] = useState<string | null>(null)
@@ -314,6 +315,13 @@ export default function AdventureMap({ onStartTraining, onOpenStats, onOpenAlbum
         >
           <img src="/assets/effects/star.png" alt="" className="w-4 h-4 object-contain" />
           战绩面板
+        </button>
+        <button
+          onClick={onOpenHomestead}
+          className="flex-1 py-3 bg-wc-surface-2 border border-wc-border rounded-lg text-sm font-bold hover:border-wc-primary transition flex items-center justify-center gap-2"
+        >
+          <img src="/assets/blocks/block_normal.png" alt="" className="w-5 h-5 object-contain" />
+          我的家园
         </button>
         <button
           onClick={onOpenAlbum}

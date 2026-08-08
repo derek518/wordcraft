@@ -174,6 +174,44 @@ export const getTodayStats = () => call<DayStats>('get_today_stats')
 export const getMasteryDistribution = () =>
   call<MasteryDistribution>('get_mastery_distribution')
 
+// ── 家园建造 ──────────────────────────
+
+export interface PlacedBlock {
+  x: number
+  y: number
+  block_type: string
+}
+
+export interface BlockStock {
+  block_type: string
+  owned: number
+  available: number
+}
+
+export interface HomesteadState {
+  grid: PlacedBlock[]
+  inventory: BlockStock[]
+  /** 网格边长，前端不硬编码 */
+  grid_size: number
+}
+
+export interface GrantOutcome {
+  granted: [string, number][]
+  total_available: number
+}
+
+export const getHomestead = () => call<HomesteadState>('get_homestead')
+
+/** 放置与移除都回传完整快照——前端自行推算库存必然与后端错开 */
+export const placeBlock = (x: number, y: number, blockType: string) =>
+  call<HomesteadState>('place_block', { x, y, blockType })
+
+export const removeBlock = (x: number, y: number) =>
+  call<HomesteadState>('remove_block', { x, y })
+
+/** 幂等，可随时调用 */
+export const grantPendingBlocks = () => call<GrantOutcome>('grant_pending_blocks')
+
 // ── 区域进度 ──────────────────────────
 
 export interface ZoneProgress {

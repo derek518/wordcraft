@@ -5,12 +5,13 @@ import StatsPanel from './components/StatsPanel'
 import PlacementTest from './components/PlacementTest'
 import CardAlbum from './components/CardAlbum'
 import SettingsPanel from './components/SettingsPanel'
+import Homestead from './components/Homestead'
 import * as api from './data/api'
 import { levelProgress } from './core/progression'
 import type { OverallStats, SessionType } from './core/types'
 import './index.css'
 
-type View = 'map' | 'train' | 'stats' | 'placement' | 'album' | 'settings'
+type View = 'map' | 'train' | 'stats' | 'placement' | 'album' | 'settings' | 'homestead'
 
 export default function App() {
   const [view, setView] = useState<View>('map')
@@ -170,6 +171,7 @@ export default function App() {
             onStartTraining={startTraining}
             onOpenStats={() => setView('stats')}
             onOpenAlbum={() => setView('album')}
+            onOpenHomestead={() => setView('homestead')}
             stats={stats}
           />
         )}
@@ -178,6 +180,7 @@ export default function App() {
         {view === 'placement' && <PlacementTest onFinish={finishTraining} />}
         {view === 'album' && <CardAlbum onBack={() => setView('map')} />}
         {view === 'settings' && <SettingsPanel onBack={() => setView('map')} />}
+        {view === 'homestead' && <Homestead onBack={() => setView('map')} />}
       </main>
 
       {/* Welcome Modal */}

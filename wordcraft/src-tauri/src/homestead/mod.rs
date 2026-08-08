@@ -111,6 +111,17 @@ pub fn grant_pending(conn: &mut Connection) -> Result<GrantOutcome, String> {
     })
 }
 
+/// 启动时补发。失败只记 warn 不阻断启动——方块是奖励，
+/// 拿不到远不如打不开应用严重，下次启动会重试。
+pub fn grant_on_startup(db: &Db) -> Result<(), String> {
+    let mut conn = db.0.lock().map_err(|e| format!("获取数据库锁失败: {e}"))?;
+    let out = grant_pending(&mut conn)?;
+    if !out.granted.is_empty() {
+        log::info!("启动补发方块: {:?}", out.granted);
+    }
+    Ok(())
+}
+
 // ─────────────────────────────────────────────
 // Commands
 // ─────────────────────────────────────────────

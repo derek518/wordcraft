@@ -36,6 +36,11 @@ fn main() {
             // 不降级、不静默继续 —— 那正是审计 D6 的失效模式。
             let database = db::init(app_handle)?;
             progression::run_daily_rollover(&database)?;
+            // 家园方块补发。放在 rollover 之后——streak 结算可能刚把
+            // best_streak 推过 7 的倍数，那一块要在同一次启动里发出
+            if let Err(e) = homestead::grant_on_startup(&database) {
+                log::warn!("家园方块补发失败: {e}");
+            }
             app.manage(database);
 
             tray::build(app_handle)?;

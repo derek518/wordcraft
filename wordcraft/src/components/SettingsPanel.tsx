@@ -101,7 +101,7 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
           <span className="text-lg">←</span> 返回
         </button>
         <div className="flex items-center gap-2">
-          <img src="/assets/blocks/block_special.png" alt="" className="w-6 h-6 object-contain" />
+          <img src="/assets/blocks/block_limited.png" alt="" className="w-6 h-6 object-contain" />
           <h2 className="text-xl font-bold font-game">设置</h2>
         </div>
       </div>

@@ -229,6 +229,32 @@ export interface Blueprint {
 /** 静态内容，随版本发布；不落库因为没有用户态可存 */
 export const getBlueprints = () => call<Blueprint[]>('get_blueprints')
 
+// ── 赛季赛道 ──────────────────────────
+
+export interface SeasonState {
+  week_start: string
+  sessions_done: number
+  sessions_total: number
+  progress: number
+  /** 幽灵车 = 上周同期的自己，spec 明确排除社交对比 */
+  ghost_progress: number
+  ghost_sessions: number
+  projected_points: number
+  track_points: number
+}
+
+export interface RedeemOutcome {
+  track_points: number
+  draw_tickets: number
+  makeup_cards: number
+}
+
+export const getSeason = () => call<SeasonState>('get_season')
+
+/** 积分不足时后端返回 Err，照常抛出 */
+export const redeemPoints = (item: string) =>
+  call<RedeemOutcome>('redeem_points', { item })
+
 // ── 区域进度 ──────────────────────────
 
 export interface ZoneProgress {

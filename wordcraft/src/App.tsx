@@ -6,12 +6,13 @@ import PlacementTest from './components/PlacementTest'
 import CardAlbum from './components/CardAlbum'
 import SettingsPanel from './components/SettingsPanel'
 import Homestead from './components/Homestead'
+import SeasonTrack from './components/SeasonTrack'
 import * as api from './data/api'
 import { levelProgress } from './core/progression'
 import type { OverallStats, SessionType } from './core/types'
 import './index.css'
 
-type View = 'map' | 'train' | 'stats' | 'placement' | 'album' | 'settings' | 'homestead'
+type View = 'map' | 'train' | 'stats' | 'placement' | 'album' | 'settings' | 'homestead' | 'season'
 
 export default function App() {
   const [view, setView] = useState<View>('map')
@@ -133,7 +134,7 @@ export default function App() {
             className="text-wc-text-muted hover:text-wc-text transition p-1.5 rounded-lg hover:bg-wc-surface-2"
             title="设置"
           >
-            <img src="/assets/blocks/block_special.png" alt="" className="w-5 h-5 object-contain opacity-60 hover:opacity-100 transition" />
+            <img src="/assets/blocks/block_limited.png" alt="" className="w-5 h-5 object-contain opacity-60 hover:opacity-100 transition" />
           </button>
         </div>
       </header>
@@ -172,6 +173,7 @@ export default function App() {
             onOpenStats={() => setView('stats')}
             onOpenAlbum={() => setView('album')}
             onOpenHomestead={() => setView('homestead')}
+            onOpenSeason={() => setView('season')}
             stats={stats}
           />
         )}
@@ -181,6 +183,7 @@ export default function App() {
         {view === 'album' && <CardAlbum onBack={() => setView('map')} />}
         {view === 'settings' && <SettingsPanel onBack={() => setView('map')} />}
         {view === 'homestead' && <Homestead onBack={() => setView('map')} />}
+        {view === 'season' && <SeasonTrack onBack={() => setView('map')} />}
       </main>
 
       {/* Welcome Modal */}
@@ -213,7 +216,7 @@ export default function App() {
                 {[
                   { icon: '/assets/crystals/crystal_grass_bright.png', text: '每天早中晚三个传送门自动开启' },
                   { icon: '/assets/crystals/crystal_fire_bright.png', text: '答对越快，水晶越亮' },
-                  { icon: '/assets/blocks/block_special.png', text: '收集的水晶可以用来建造家园' },
+                  { icon: '/assets/blocks/block_limited.png', text: '收集的水晶可以用来建造家园' },
                 ].map((item, i) => (
                   <div key={i} className="flex items-center gap-3 text-sm p-2 rounded-lg bg-wc-bg/50">
                     <img src={item.icon} alt="" className="w-6 h-6 object-contain flex-shrink-0" />

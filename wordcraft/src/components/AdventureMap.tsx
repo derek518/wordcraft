@@ -7,6 +7,7 @@ interface AdventureMapProps {
   onOpenStats: () => void
   onOpenAlbum: () => void
   onOpenHomestead: () => void
+  onOpenSeason: () => void
   stats: OverallStats | null
 }
 
@@ -55,7 +56,7 @@ const ELEMENT_COLORS: Record<string, { bg: string; glow: string; text: string }>
   ice: { bg: '#22d3ee', glow: 'rgba(103, 232, 249, 0.4)', text: '#67e8f9' },
 }
 
-export default function AdventureMap({ onStartTraining, onOpenStats, onOpenAlbum, onOpenHomestead, stats }: AdventureMapProps) {
+export default function AdventureMap({ onStartTraining, onOpenStats, onOpenAlbum, onOpenHomestead, onOpenSeason, stats }: AdventureMapProps) {
   const [sessions, setSessions] = useState<Session[]>([])
   const [zones, setZones] = useState<api.ZoneProgress[]>([])
   const [hoveredPortal, setHoveredPortal] = useState<string | null>(null)
@@ -318,17 +319,26 @@ export default function AdventureMap({ onStartTraining, onOpenStats, onOpenAlbum
         </button>
         <button
           onClick={onOpenHomestead}
-          className="flex-1 py-3 bg-wc-surface-2 border border-wc-border rounded-lg text-sm font-bold hover:border-wc-primary transition flex items-center justify-center gap-2"
+          className="btn-game hud-panel rounded-lg py-2.5 text-sm font-bold transition-all hover:border-wc-primary/50 flex items-center justify-center gap-1.5"
+          style={{ borderColor: 'rgba(60, 60, 100, 0.8)' }}
         >
-          <img src="/assets/blocks/block_normal.png" alt="" className="w-5 h-5 object-contain" />
+          <img src="/assets/blocks/block_normal.png" alt="" className="w-4 h-4 object-contain" />
           我的家园
+        </button>
+        <button
+          onClick={onOpenSeason}
+          className="btn-game hud-panel rounded-lg py-2.5 text-sm font-bold transition-all hover:border-wc-primary/50 flex items-center justify-center gap-1.5"
+          style={{ borderColor: 'rgba(60, 60, 100, 0.8)' }}
+        >
+          <span className="text-base leading-none">🏁</span>
+          本周赛道
         </button>
         <button
           onClick={onOpenAlbum}
           className="btn-game hud-panel rounded-lg py-2.5 text-sm font-bold transition-all hover:border-wc-primary/50 flex items-center justify-center gap-1.5 relative"
           style={{ borderColor: 'rgba(60, 60, 100, 0.8)' }}
         >
-          <img src="/assets/blocks/block_special.png" alt="" className="w-4 h-4 object-contain" />
+          <img src="/assets/blocks/block_limited.png" alt="" className="w-4 h-4 object-contain" />
           水晶图鉴
           {(stats?.draw_tickets ?? 0) > 0 && (
             <span className="absolute -top-1 -right-1 px-1.5 py-0.5 text-[10px] rounded-full bg-wc-gold text-wc-bg font-bold font-game-mono animate-bounce">

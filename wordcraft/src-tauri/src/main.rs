@@ -7,6 +7,7 @@ use tauri::Manager;
 mod cards;
 mod commands;
 mod db;
+mod homestead;
 mod placement;
 mod platform;
 mod progression;
@@ -68,6 +69,11 @@ fn main() {
             cards::draw_card,
             cards::get_collection,
             cards::mark_cards_seen,
+            // 家园建造
+            homestead::get_homestead,
+            homestead::place_block,
+            homestead::remove_block,
+            homestead::grant_pending_blocks,
             // 统计
             commands::stats::get_today_stats,
             commands::stats::get_overall_stats,

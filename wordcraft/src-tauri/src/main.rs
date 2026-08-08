@@ -79,6 +79,7 @@ fn main() {
             homestead::place_block,
             homestead::remove_block,
             homestead::grant_pending_blocks,
+            homestead::get_blueprints,
             // 统计
             commands::stats::get_today_stats,
             commands::stats::get_overall_stats,

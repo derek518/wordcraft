@@ -212,6 +212,23 @@ export const removeBlock = (x: number, y: number) =>
 /** 幂等，可随时调用 */
 export const grantPendingBlocks = () => call<GrantOutcome>('grant_pending_blocks')
 
+export interface BlueprintCell {
+  x: number
+  y: number
+  block_type: string
+}
+
+export interface Blueprint {
+  id: string
+  name: string
+  description: string
+  cells: BlueprintCell[]
+  required: [string, number][]
+}
+
+/** 静态内容，随版本发布；不落库因为没有用户态可存 */
+export const getBlueprints = () => call<Blueprint[]>('get_blueprints')
+
 // ── 区域进度 ──────────────────────────
 
 export interface ZoneProgress {

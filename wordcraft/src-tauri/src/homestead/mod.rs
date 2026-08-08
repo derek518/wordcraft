@@ -2,6 +2,7 @@
 //!
 //! 欢迎页已向用户承诺「收集的水晶可以用来建造家园」，在此兑现。
 
+mod blueprints;
 mod grants;
 
 // grants 的函数只在本模块内使用，不对外导出——它们是发放规则的实现细节，
@@ -109,6 +110,13 @@ pub fn grant_pending(conn: &mut Connection) -> Result<GrantOutcome, String> {
         granted,
         total_available: inv.iter().map(|s| s.available).sum(),
     })
+}
+
+/// contracts §3.7：预置蓝图。静态数据，不落库——蓝图是产品内容，
+/// 改动随版本发布，没有用户态可存。
+#[tauri::command]
+pub fn get_blueprints() -> Vec<blueprints::Blueprint> {
+    blueprints::all()
 }
 
 /// 启动时补发。失败只记 warn 不阻断启动——方块是奖励，

@@ -32,6 +32,8 @@ const BLOCK_META: Record<string, { label: string; icon: string; hint: string }> 
 export default function Homestead({ onBack }: HomesteadProps) {
   const [state, setState] = useState<api.HomesteadState | null>(null)
   const [selected, setSelected] = useState('normal')
+  const [blueprints, setBlueprints] = useState<api.Blueprint[]>([])
+  const [activeBp, setActiveBp] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -41,7 +43,9 @@ export default function Homestead({ onBack }: HomesteadProps) {
       // 先补发再读取：用户可能在别处练了词，进家园时应该已经拿到方块，
       // 而不是要等下次启动
       await api.grantPendingBlocks()
-      setState(await api.getHomestead())
+      const [home, bps] = await Promise.all([api.getHomestead(), api.getBlueprints()])
+      setState(home)
+      setBlueprints(bps)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
@@ -54,6 +58,15 @@ export default function Homestead({ onBack }: HomesteadProps) {
   /** 格子坐标 → 已放置的方块。网格只回传非空格，查表比遍历快 */
   const placedAt = new Map(state?.grid.map((b) => [`${b.x},${b.y}`, b.block_type]) ?? [])
 
+  const blueprint = blueprints.find((b) => b.id === activeBp) ?? null
+  /** 蓝图要求：坐标 → 应放的类型。轮廓叠加在空格上作为引导 */
+  const planAt = new Map(blueprint?.cells.map((c) => [`${c.x},${c.y}`, c.block_type]) ?? [])
+
+  /** 已按蓝图放对的格子数 */
+  const matched = blueprint
+    ? blueprint.cells.filter((c) => placedAt.get(`${c.x},${c.y}`) === c.block_type).length
+    : 0
+
   const handleCell = async (x: number, y: number) => {
     if (busy || !state) return
     const existing = placedAt.get(`${x},${y}`)
@@ -62,9 +75,11 @@ export default function Homestead({ onBack }: HomesteadProps) {
     setError('')
     try {
       // 后端返回完整快照，前端不自行推算库存增减——两处各算一遍必然会错开
+      // 蓝图激活时按图纸要求的类型放置，省去用户在背包间来回切换
+      const wanted = planAt.get(`${x},${y}`) ?? selected
       const next = existing
         ? await api.removeBlock(x, y)
-        : await api.placeBlock(x, y, selected)
+        : await api.placeBlock(x, y, wanted)
       setState(next)
       if (!existing) playCorrect(0)
     } catch (e) {
@@ -136,6 +151,70 @@ export default function Homestead({ onBack }: HomesteadProps) {
         </div>
       )}
 
+      {/* 蓝图。轮廓引导而非自动摆放——点一下就铺好会把建造变成领奖 */}
+      <div className="flex gap-2 mb-3 overflow-x-auto pb-1">
+        <button
+          onClick={() => setActiveBp(null)}
+          className={`px-3 py-2 rounded-lg text-xs whitespace-nowrap border transition ${
+            activeBp === null
+              ? 'border-wc-primary bg-wc-primary/15'
+              : 'border-wc-border bg-wc-surface-2 hover:border-wc-primary/50'
+          }`}
+        >
+          自由建造
+        </button>
+        {blueprints.map((bp) => {
+          const done = bp.cells.filter(
+            (c) => placedAt.get(`${c.x},${c.y}`) === c.block_type,
+          ).length
+          return (
+            <button
+              key={bp.id}
+              onClick={() => setActiveBp(activeBp === bp.id ? null : bp.id)}
+              title={bp.description}
+              className={`px-3 py-2 rounded-lg text-xs whitespace-nowrap border transition ${
+                activeBp === bp.id
+                  ? 'border-wc-primary bg-wc-primary/15'
+                  : 'border-wc-border bg-wc-surface-2 hover:border-wc-primary/50'
+              }`}
+            >
+              {bp.name}
+              <span className="ml-1.5 font-game-mono text-wc-text-muted">
+                {done}/{bp.cells.length}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+
+      {blueprint && (
+        <div className="hud-panel rounded-xl p-3 mb-3 text-xs">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-wc-text-muted">{blueprint.description}</span>
+            <span className="font-game-mono text-wc-accent">
+              {matched}/{blueprint.cells.length}
+            </span>
+          </div>
+          <div className="h-1.5 bg-wc-bg rounded-full overflow-hidden mb-2">
+            <div
+              className="h-full progress-shine rounded-full transition-all duration-500"
+              style={{ width: `${(matched / blueprint.cells.length) * 100}%` }}
+            />
+          </div>
+          <div className="flex gap-3 text-wc-text-muted">
+            {blueprint.required.map(([type, need]) => {
+              const have = state.inventory.find((s) => s.block_type === type)?.owned ?? 0
+              return (
+                <span key={type} className={have < need ? 'text-wc-warning' : ''}>
+                  {BLOCK_META[type]?.label} {need} 块
+                  {have < need && `（还差 ${need - have}）`}
+                </span>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       {/* 网格。20×20 用 CSS grid 平铺，格子尺寸随容器自适应 */}
       <div className="hud-panel rounded-2xl p-4 mb-4 overflow-x-auto">
         <div
@@ -149,24 +228,47 @@ export default function Homestead({ onBack }: HomesteadProps) {
             const x = i % state.grid_size
             const y = Math.floor(i / state.grid_size)
             const block = placedAt.get(`${x},${y}`)
+            const planned = planAt.get(`${x},${y}`)
+            // 放对了：蓝图要求的类型与实际一致
+            const correct = planned !== undefined && planned === block
+
             return (
               <button
                 key={i}
                 onClick={() => handleCell(x, y)}
                 disabled={busy}
-                title={block ? `点击移除（${BLOCK_META[block]?.label}）` : `放置到 (${x}, ${y})`}
-                className={`aspect-square rounded-[3px] transition-all ${
+                title={
+                  block
+                    ? `点击移除（${BLOCK_META[block]?.label}）`
+                    : planned
+                      ? `蓝图：${BLOCK_META[planned]?.label}`
+                      : `放置到 (${x}, ${y})`
+                }
+                className={`relative aspect-square rounded-[3px] transition-all ${
                   block
                     ? 'hover:brightness-125 hover:scale-110'
-                    : 'bg-wc-surface-2/40 hover:bg-wc-primary/25 border border-wc-border/30'
-                } ${busy ? 'cursor-wait' : 'cursor-pointer'}`}
+                    : planned
+                      ? 'bg-wc-primary/15 border border-wc-primary/50 hover:bg-wc-primary/30'
+                      : 'bg-wc-surface-2/40 hover:bg-wc-primary/25 border border-wc-border/30'
+                } ${correct ? 'ring-1 ring-wc-success/60' : ''} ${
+                  busy ? 'cursor-wait' : 'cursor-pointer'
+                }`}
               >
-                {block && (
+                {block ? (
                   <img
                     src={BLOCK_META[block]?.icon}
                     alt={BLOCK_META[block]?.label}
                     className="w-full h-full object-contain"
                   />
+                ) : (
+                  planned && (
+                    // 轮廓：淡显目标方块，引导而不代劳
+                    <img
+                      src={BLOCK_META[planned]?.icon}
+                      alt=""
+                      className="w-full h-full object-contain opacity-20"
+                    />
+                  )
                 )}
               </button>
             )

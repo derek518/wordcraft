@@ -246,12 +246,49 @@ export interface Blueprint {
   id: string
   name: string
   description: string
+  /** 1..4。后一张严格包含前一张，所以也是解锁顺序 */
+  stage: number
   cells: BlueprintCell[]
   required: [string, number][]
 }
 
 /** 静态内容，随版本发布；不落库因为没有用户态可存 */
 export const getBlueprints = () => call<Blueprint[]>('get_blueprints')
+
+export interface Resident {
+  /** 已入住时是位置序号，候选时为 -1 */
+  slot: number
+  card_id: number
+  name: string
+  image_path: string
+  rarity: number
+}
+
+/** 居民转述的真实数字，措辞在前端 */
+export interface HomesteadDigest {
+  due_count: number
+  available_blocks: number
+  streak: number
+  /** 距下一个词量里程碑还差多少词；0 表示没有下一档 */
+  words_to_milestone: number
+}
+
+export interface ResidentsState {
+  slots: number
+  max_slots: number
+  completed: string[]
+  residents: Resident[]
+  candidates: Resident[]
+  digest: HomesteadDigest
+}
+
+export const getResidents = () => call<ResidentsState>('get_residents')
+
+export const moveInResident = (slot: number, cardId: number) =>
+  call<ResidentsState>('move_in_resident', { slot, cardId })
+
+export const moveOutResident = (slot: number) =>
+  call<ResidentsState>('move_out_resident', { slot })
 
 // ── 魔王讨伐 ──────────────────────────
 

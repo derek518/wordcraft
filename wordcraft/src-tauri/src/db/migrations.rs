@@ -57,6 +57,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "boss",
         sql: include_str!("migrations/008_boss.sql"),
     },
+    Migration {
+        version: 9,
+        name: "residents",
+        sql: include_str!("migrations/009_residents.sql"),
+    },
 ];
 
 /// 执行所有未应用的迁移，返回本次实际应用的版本号。
@@ -204,6 +209,8 @@ mod tests {
         // migration 006：家园建造
         ("block_inventory", &["block_type", "owned", "placed"]),
         ("homestead_grid", &["x", "y", "block_type", "placed_at"]),
+        // migration 009：家园居民
+        ("homestead_residents", &["slot", "card_id", "moved_in_at"]),
         ("block_grants",
          &["id", "source", "source_key", "block_type", "amount", "granted_at"]),
         // migration 007：赛季赛道
@@ -268,7 +275,7 @@ mod tests {
         let mut conn = in_memory_db();
 
         let first = run(&mut conn).expect("首次迁移失败");
-        assert_eq!(first, vec![1, 2, 3, 4, 5, 6, 7, 8], "首次应用全部迁移");
+        assert_eq!(first, vec![1, 2, 3, 4, 5, 6, 7, 8, 9], "首次应用全部迁移");
 
         let second = run(&mut conn).expect("重复迁移失败");
         assert!(second.is_empty(), "重复执行不应再应用任何迁移");

@@ -4,6 +4,7 @@
 
 mod blueprints;
 mod grants;
+mod residents;
 
 // grants 的函数只在本模块内使用，不对外导出——它们是发放规则的实现细节，
 // command 层只暴露 grant_pending
@@ -170,6 +171,111 @@ pub fn grant_pending_blocks(db: State<Db>) -> Result<GrantOutcome, String> {
     grant_pending(&mut conn)
 }
 
+// ─────────────────────────────────────────────
+// 居民
+// ─────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct ResidentsState {
+    /// 已解锁的入住位
+    pub slots: i64,
+    pub max_slots: i64,
+    /// 已建成的蓝图 id，按阶段顺序
+    pub completed: Vec<String>,
+    pub residents: Vec<repo::Resident>,
+    /// 已收集但未入住的生物
+    pub candidates: Vec<repo::Resident>,
+    pub digest: Digest,
+}
+
+/// 居民转述的真实数据。
+///
+/// 家园此前是只出不进的水槽——建完就没事做了。让住户报几个当下的数字，
+/// 它就同时是个软性的信息面板，而不用另做一套通知。
+/// 数字在后端算，措辞留给前端：事实只能有一个来源，说法可以有很多种。
+#[derive(Debug, Serialize)]
+pub struct Digest {
+    pub due_count: i64,
+    pub available_blocks: i64,
+    pub streak: i64,
+    /// 距下一个词量里程碑还差多少词；已全部达成时为 0
+    pub words_to_milestone: i64,
+}
+
+fn digest(conn: &Connection) -> Result<Digest, String> {
+    let now = clock::now();
+    let due_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM word_states WHERE reps > 0 AND due_at <= ?1",
+            [&now],
+            |r| r.get(0),
+        )
+        .map_err(|e| format!("统计到期词失败: {e}"))?;
+
+    let answered = answered_word_ids(conn)?.len() as i64;
+    let words_to_milestone = grants::words_to_next_milestone(answered);
+
+    let stats = player_stats::get(conn)?;
+    let available_blocks = repo::inventory(conn)?.iter().map(|s| s.available).sum();
+
+    Ok(Digest {
+        due_count,
+        available_blocks,
+        streak: stats.current_streak,
+        words_to_milestone,
+    })
+}
+
+fn residents_snapshot(conn: &Connection) -> Result<ResidentsState, String> {
+    let done = residents::completed(&repo::grid(conn)?, &blueprints::all());
+    let slots = residents::slots_for(done.len());
+
+    // 拆掉一块方块，蓝图就不再成立，位置随之收回。住在里面的居民
+    // 必须同时搬走，否则会留下一条前端读不出来的记录
+    let evicted = repo::evict_beyond(conn, slots)?;
+    if evicted > 0 {
+        log::info!("蓝图不再成立，{evicted} 位居民搬离");
+    }
+
+    Ok(ResidentsState {
+        slots,
+        max_slots: residents::max_slots(),
+        completed: done,
+        residents: repo::residents(conn)?,
+        candidates: repo::resident_candidates(conn)?,
+        digest: digest(conn)?,
+    })
+}
+
+#[tauri::command]
+pub fn get_residents(db: State<Db>) -> Result<ResidentsState, String> {
+    let conn = lock(&db)?;
+    residents_snapshot(&conn)
+}
+
+#[tauri::command]
+pub fn move_in_resident(db: State<Db>, slot: i64, card_id: i64) -> Result<ResidentsState, String> {
+    let conn = lock(&db)?;
+
+    // 位置上限由已建成的蓝图决定。前端拿到的槽位数可能已经过期
+    // （比如另一个界面刚拆了方块），以此刻的实际状态为准
+    let done = residents::completed(&repo::grid(&conn)?, &blueprints::all());
+    let slots = residents::slots_for(done.len());
+    if !(0..slots).contains(&slot) {
+        return Err(format!("位置 {slot} 尚未解锁，当前只有 {slots} 个"));
+    }
+
+    repo::move_in(&conn, slot, card_id, &clock::now())?;
+    residents_snapshot(&conn)
+}
+
+#[tauri::command]
+pub fn move_out_resident(db: State<Db>, slot: i64) -> Result<ResidentsState, String> {
+    let conn = lock(&db)?;
+    repo::move_out(&conn, slot)?;
+    residents_snapshot(&conn)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -320,5 +426,163 @@ mod tests {
         let state = snapshot(&conn).unwrap();
         // 前端要渲染三个槽位，缺类型会让界面少一格
         assert_eq!(state.inventory.len(), 3);
+    }
+
+    /// 居民相关的 SQL 只有跑起来才会暴露列名与联表错误。
+    mod 居民 {
+        use super::*;
+
+        /// 建好小屋（24 块普通方块），并收集若干张卡。
+        fn 有小屋的家园(collect: &[i64]) -> Connection {
+            let mut conn = db(30, 0);
+            grant_pending(&mut conn).unwrap();
+
+            let hut = blueprints::all().into_iter().next().unwrap();
+            for c in &hut.cells {
+                repo::place(&conn, c.x, c.y, &c.block_type, &clock::now()).unwrap();
+            }
+
+            for id in collect {
+                conn.execute(
+                    "INSERT INTO card_collection (card_id, count, first_at, is_new)
+                     VALUES (?1, 1, ?2, 0)",
+                    rusqlite::params![id, clock::now()],
+                )
+                .unwrap();
+            }
+            conn
+        }
+
+        /// 卡池里第一张生物卡与第一张画作的 id。
+        fn 卡池(conn: &Connection) -> (i64, i64) {
+            let creature = conn
+                .query_row(
+                    "SELECT id FROM cards WHERE card_type='creature' ORDER BY id LIMIT 1",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            let painting = conn
+                .query_row(
+                    "SELECT id FROM cards WHERE card_type='painting' ORDER BY id LIMIT 1",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            (creature, painting)
+        }
+
+        #[test]
+        fn 建成小屋解锁第一个入住位() {
+            let conn = 有小屋的家园(&[]);
+            let s = residents_snapshot(&conn).unwrap();
+            assert_eq!(s.completed, vec!["hut"]);
+            assert_eq!(s.slots, 1, "建成一张蓝图应解锁一个位置");
+        }
+
+        #[test]
+        fn 未建成任何蓝图时没有入住位() {
+            let conn = db(30, 0);
+            let s = residents_snapshot(&conn).unwrap();
+            assert_eq!(s.slots, 0);
+            assert!(s.residents.is_empty());
+        }
+
+        #[test]
+        fn 只有已收集的生物出现在候选里() {
+            let mut conn = db(30, 0);
+            migrations::run(&mut conn).unwrap();
+            let (creature, painting) = 卡池(&conn);
+            let conn = 有小屋的家园(&[creature, painting]);
+
+            let s = residents_snapshot(&conn).unwrap();
+            let ids: Vec<i64> = s.candidates.iter().map(|c| c.card_id).collect();
+            // 画作是挂墙上的，不是活物
+            assert_eq!(ids, vec![creature], "候选应只含已收集的生物卡");
+        }
+
+        #[test]
+        fn 入住后从候选里消失() {
+            let mut conn = db(30, 0);
+            migrations::run(&mut conn).unwrap();
+            let (creature, _) = 卡池(&conn);
+            let conn = 有小屋的家园(&[creature]);
+
+            repo::move_in(&conn, 0, creature, &clock::now()).unwrap();
+            let s = residents_snapshot(&conn).unwrap();
+
+            assert_eq!(s.residents.len(), 1);
+            assert_eq!(s.residents[0].card_id, creature);
+            assert!(!s.residents[0].name.is_empty(), "应联表取到卡牌名");
+            assert!(s.candidates.is_empty(), "已入住的不该还在候选里");
+        }
+
+        #[test]
+        fn 未收集的卡不能入住() {
+            let mut conn = db(30, 0);
+            migrations::run(&mut conn).unwrap();
+            let (creature, _) = 卡池(&conn);
+            let conn = 有小屋的家园(&[]); // 一张都没收集
+
+            let err = repo::move_in(&conn, 0, creature, &clock::now()).unwrap_err();
+            assert!(err.contains("尚未收集"), "{err}");
+        }
+
+        #[test]
+        fn 画作不能入住() {
+            let mut conn = db(30, 0);
+            migrations::run(&mut conn).unwrap();
+            let (_, painting) = 卡池(&conn);
+            let conn = 有小屋的家园(&[painting]);
+
+            let err = repo::move_in(&conn, 0, painting, &clock::now()).unwrap_err();
+            assert!(err.contains("生物卡"), "{err}");
+        }
+
+        #[test]
+        fn 同一只生物不能占两个位置() {
+            let mut conn = db(30, 0);
+            migrations::run(&mut conn).unwrap();
+            let (creature, _) = 卡池(&conn);
+            let conn = 有小屋的家园(&[creature]);
+
+            repo::move_in(&conn, 0, creature, &clock::now()).unwrap();
+            // 唯一约束挡下分身。否则一张稀有卡就能填满所有位置
+            assert!(repo::move_in(&conn, 1, creature, &clock::now()).is_err());
+        }
+
+        #[test]
+        fn 拆掉方块使蓝图失效时居民自动搬离() {
+            let mut conn = db(30, 0);
+            migrations::run(&mut conn).unwrap();
+            let (creature, _) = 卡池(&conn);
+            let conn = 有小屋的家园(&[creature]);
+
+            repo::move_in(&conn, 0, creature, &clock::now()).unwrap();
+            assert_eq!(residents_snapshot(&conn).unwrap().residents.len(), 1);
+
+            // 拆掉小屋的一块，蓝图不再成立
+            let hut = blueprints::all().into_iter().next().unwrap();
+            let c = &hut.cells[0];
+            repo::remove(&conn, c.x, c.y).unwrap();
+
+            let s = residents_snapshot(&conn).unwrap();
+            assert_eq!(s.slots, 0);
+            assert!(s.residents.is_empty(), "位置收回后居民必须搬走");
+            // 搬走的生物要能重新入住，不能凭空消失
+            assert_eq!(s.candidates.len(), 1);
+        }
+
+        #[test]
+        fn 简报数字取自真实状态() {
+            let mut conn = db(30, 0);
+            grant_pending(&mut conn).unwrap();
+            let d = digest(&conn).unwrap();
+
+            assert_eq!(d.available_blocks, 30, "30 个作答词应发 30 块");
+            // 里程碑首档 200 词，已答 30
+            assert_eq!(d.words_to_milestone, 170);
+        }
+
     }
 }

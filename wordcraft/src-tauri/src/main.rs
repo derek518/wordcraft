@@ -90,6 +90,9 @@ fn main() {
             homestead::place_block,
             homestead::remove_block,
             homestead::grant_pending_blocks,
+            homestead::get_residents,
+            homestead::move_in_resident,
+            homestead::move_out_resident,
             homestead::get_blueprints,
             // 赛季赛道
             season::get_season,

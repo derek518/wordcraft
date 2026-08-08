@@ -217,6 +217,123 @@ pub fn granted_keys(conn: &Connection, source: &str) -> Result<Vec<String>, Stri
         .map_err(|e| format!("读取发放记录失败: {e}"))
 }
 
+// ── 居民 ─────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Resident {
+    /// 已入住时是位置序号，候选时为 -1
+    pub slot: i64,
+    pub card_id: i64,
+    pub name: String,
+    pub image_path: String,
+    pub rarity: i64,
+}
+
+const NOT_RESIDING: i64 = -1;
+
+/// 已入住的居民，按位置排序。
+pub fn residents(conn: &Connection) -> Result<Vec<Resident>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT r.slot, c.id, c.name, c.image_path, c.rarity
+             FROM homestead_residents r JOIN cards c ON c.id = r.card_id
+             ORDER BY r.slot",
+        )
+        .map_err(|e| format!("准备居民查询失败: {e}"))?;
+
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(Resident {
+                slot: r.get(0)?,
+                card_id: r.get(1)?,
+                name: r.get(2)?,
+                image_path: r.get(3)?,
+                rarity: r.get(4)?,
+            })
+        })
+        .map_err(|e| format!("查询居民失败: {e}"))?;
+
+    rows.collect::<Result<_, _>>()
+        .map_err(|e| format!("读取居民失败: {e}"))
+}
+
+/// 已收集但尚未入住的生物。画作不能入住——它们是挂在墙上的，不是活物。
+pub fn resident_candidates(conn: &Connection) -> Result<Vec<Resident>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT c.id, c.name, c.image_path, c.rarity
+             FROM cards c JOIN card_collection k ON k.card_id = c.id
+             WHERE c.card_type = 'creature'
+               AND c.id NOT IN (SELECT card_id FROM homestead_residents)
+             ORDER BY c.rarity DESC, c.id",
+        )
+        .map_err(|e| format!("准备候选查询失败: {e}"))?;
+
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(Resident {
+                slot: NOT_RESIDING,
+                card_id: r.get(0)?,
+                name: r.get(1)?,
+                image_path: r.get(2)?,
+                rarity: r.get(3)?,
+            })
+        })
+        .map_err(|e| format!("查询候选失败: {e}"))?;
+
+    rows.collect::<Result<_, _>>()
+        .map_err(|e| format!("读取候选失败: {e}"))
+}
+
+/// 让一只生物住进某个位置。
+///
+/// 校验放在这里而非命令层：前端传什么都不该能写进一条无效记录。
+/// 未收集的卡、画作、已占用的位置，三种都必须被挡下且说明原因。
+pub fn move_in(conn: &Connection, slot: i64, card_id: i64, now: &str) -> Result<(), String> {
+    let collected: bool = conn
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM cards c JOIN card_collection k ON k.card_id = c.id
+               WHERE c.id = ?1 AND c.card_type = 'creature')",
+            [card_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| format!("校验卡牌失败: {e}"))?;
+
+    if !collected {
+        return Err(format!("卡牌 {card_id} 尚未收集，或不是生物卡"));
+    }
+
+    // 位置已有住户时先请出去。用户点的是「换成这只」，
+    // 报「位置已占用」再让他手动腾位是多余的一步
+    conn.execute("DELETE FROM homestead_residents WHERE slot = ?1", [slot])
+        .map_err(|e| format!("腾出位置失败: {e}"))?;
+
+    conn.execute(
+        "INSERT INTO homestead_residents (slot, card_id, moved_in_at) VALUES (?1, ?2, ?3)",
+        rusqlite::params![slot, card_id, now],
+    )
+    .map_err(|e| format!("入住失败: {e}"))?;
+
+    Ok(())
+}
+
+/// 请某位居民搬走。位置本来就空时也算成功——用户要的结果已经达成。
+pub fn move_out(conn: &Connection, slot: i64) -> Result<(), String> {
+    conn.execute("DELETE FROM homestead_residents WHERE slot = ?1", [slot])
+        .map_err(|e| format!("搬离失败: {e}"))?;
+    Ok(())
+}
+
+/// 清理超出已解锁位置的居民。
+///
+/// 位置数由建成的蓝图决定，而方块可以被拆走——拆掉一块，蓝图就不再成立，
+/// 位置随之收回。此时住在里面的生物必须搬走，否则会留下一条读不出来的记录。
+pub fn evict_beyond(conn: &Connection, slots: i64) -> Result<usize, String> {
+    conn.execute("DELETE FROM homestead_residents WHERE slot >= ?1", [slots])
+        .map_err(|e| format!("清理越界居民失败: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

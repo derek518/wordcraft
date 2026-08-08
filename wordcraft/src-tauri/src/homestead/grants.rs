@@ -12,6 +12,18 @@ pub(crate) const MILESTONES: [i64; 5] = [200, 500, 1000, 2000, 3657];
 /// 连续打卡每满这个天数发一块限定方块。
 pub const STREAK_STEP: i64 = 7;
 
+/// 距下一个词量里程碑还差多少词。
+///
+/// 全部达成时返回 0——含义是「没有下一档」，不是「差 0 个词就到」。
+/// 调用方据此决定是否显示这条提示。
+pub fn words_to_next_milestone(answered: i64) -> i64 {
+    MILESTONES
+        .iter()
+        .find(|m| **m > answered)
+        .map(|m| m - answered)
+        .unwrap_or(0)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingGrant {
     pub source: &'static str,
@@ -174,6 +186,23 @@ mod tests {
         assert_eq!(s[0].source, "milestone");
         assert_eq!(m[0].block_type, "normal");
         assert_eq!(s[0].block_type, "rare");
+    }
+
+    #[test]
+    fn 里程碑差额指向下一档() {
+        assert_eq!(words_to_next_milestone(0), 200);
+        assert_eq!(words_to_next_milestone(199), 1);
+        assert_eq!(words_to_next_milestone(200), 300, "刚跨过一档应指向下一档");
+        assert_eq!(words_to_next_milestone(1999), 1);
+    }
+
+    #[test]
+    fn 全部达成后差额为零() {
+        // 0 的含义是「没有下一档」，不是「差 0 个词就到」。
+        // 调用方据此决定隐藏这条提示
+        let last = *MILESTONES.last().unwrap();
+        assert_eq!(words_to_next_milestone(last), 0);
+        assert_eq!(words_to_next_milestone(last + 1000), 0);
     }
 
     #[test]

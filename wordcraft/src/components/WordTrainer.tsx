@@ -3,11 +3,13 @@ import * as api from '../data/api'
 import { gradeAnswer } from '../core/fsrs'
 import { xpFor } from '../core/progression'
 import { playCorrect, playIncorrect, playSessionComplete, setSoundEnabled } from '../core/sound'
-import { buildQuestion, checkSpelling, effectiveLevel, type Question } from '../core/question'
+import { buildQuestion, checkSpelling, drillLevel, type DrillMode, type Question } from '../core/question'
 import type { QueueItem, SessionType } from '../core/types'
 
 interface WordTrainerProps {
   sessionType: SessionType
+  /** 自由练习的专项模式；普通时段恒为 null */
+  drillMode?: DrillMode
   onFinish: () => void
 }
 
@@ -17,6 +19,12 @@ const SESSION_NAMES: Record<SessionType, string> = {
   noon: '烈日之门',
   evening: '星夜之门',
   free: '自由探险',
+}
+
+/** 专项模式的标题。进入后要能一眼看出自己在练什么 */
+const DRILL_NAMES: Record<Exclude<DrillMode, null>, string> = {
+  spelling: '拼写专项',
+  dictation: '听写模式',
 }
 
 const SESSION_COLORS: Record<SessionType, { gradient: string; glow: string }> = {
@@ -35,7 +43,9 @@ function crystalForBand(band: number, state: 'bright' | 'faint' | 'dim' = 'brigh
 
 type Phase = 'loading' | 'error' | 'answering' | 'complete'
 
-export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps) {
+export default function WordTrainer({ sessionType, drillMode = null, onFinish }: WordTrainerProps) {
+  // 专项模式下显示专项名——用户主动选了「听写」，标题却写「自由探险」会让人以为选错了
+  const title = drillMode ? DRILL_NAMES[drillMode] : SESSION_NAMES[sessionType]
   const [phase, setPhase] = useState<Phase>('loading')
   const [errorMessage, setErrorMessage] = useState('')
   const [sessionId, setSessionId] = useState<number | null>(null)
@@ -89,7 +99,7 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
   }, [])
 
   const prepareQuestion = useCallback(async (item: QueueItem) => {
-    const level = effectiveLevel(item, audioAvailable.current)
+    const level = drillLevel(drillMode, item, audioAvailable.current)
     const distractors = level >= 5 ? [] : await api.getDistractorPool(item.word_id, level, 3)
     setQuestion(buildQuestion({ item, level, distractors }))
     setSpellInput('')
@@ -97,7 +107,7 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
       void api.playWordAudio(item.word).catch(() => {})
     }
     startedAt.current = Date.now()
-  }, [])
+  }, [drillMode])
 
   const load = useCallback(async () => {
     setPhase('loading')
@@ -313,7 +323,7 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
               <div className="text-center p-3 rounded-xl bg-wc-bg/50">
                 <div className="text-2xl mb-1">🚪</div>
                 <div className="text-wc-text-muted text-xs">传送门</div>
-                <div className="text-lg font-bold">{SESSION_NAMES[sessionType]}</div>
+                <div className="text-lg font-bold">{title}</div>
               </div>
             </div>
           </div>
@@ -366,7 +376,7 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
             className={`text-xs font-bold px-3 py-1 rounded-full bg-gradient-to-r ${colors.gradient} text-white`}
             style={{ boxShadow: `0 0 12px ${colors.glow}` }}
           >
-            {SESSION_NAMES[sessionType]}
+            {title}
           </div>
           {/* 题型标识 */}
           <div className="text-xs px-2 py-1 rounded-lg bg-wc-surface-2 border border-wc-border text-wc-text-muted font-game-mono">

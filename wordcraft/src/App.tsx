@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import AdventureMap from './components/AdventureMap'
 import WordTrainer from './components/WordTrainer'
+import type { DrillMode } from './core/question'
 import StatsPanel from './components/StatsPanel'
 import PlacementTest from './components/PlacementTest'
 import CardAlbum from './components/CardAlbum'
@@ -19,6 +20,7 @@ type View = 'map' | 'train' | 'stats' | 'placement' | 'album' | 'settings' | 'ho
 export default function App() {
   const [view, setView] = useState<View>('map')
   const [sessionType, setSessionType] = useState<SessionType>('morning')
+  const [drillMode, setDrillMode] = useState<DrillMode>(null)
   const [stats, setStats] = useState<OverallStats | null>(null)
   const [showWelcome, setShowWelcome] = useState(false)
   const [bootError, setBootError] = useState('')
@@ -81,8 +83,9 @@ export default function App() {
     })()
   }, [bootstrap, loadStats])
 
-  const startTraining = (type: SessionType) => {
+  const startTraining = (type: SessionType, drill: DrillMode = null) => {
     setSessionType(type)
+    setDrillMode(drill)
     setView('train')
   }
 
@@ -181,7 +184,9 @@ export default function App() {
             stats={stats}
           />
         )}
-        {view === 'train' && <WordTrainer sessionType={sessionType} onFinish={finishTraining} />}
+        {view === 'train' && (
+          <WordTrainer sessionType={sessionType} drillMode={drillMode} onFinish={finishTraining} />
+        )}
         {view === 'stats' && <StatsPanel onBack={() => setView('map')} />}
         {view === 'placement' && <PlacementTest onFinish={finishTraining} />}
         {view === 'album' && <CardAlbum onBack={() => setView('map')} />}

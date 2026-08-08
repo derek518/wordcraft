@@ -3,6 +3,7 @@ import {
   blankOut,
   buildQuestion,
   checkSpelling,
+  drillLevel,
   effectiveLevel,
   spellingHint,
   SPELLING_MAX_BAND,
@@ -54,6 +55,45 @@ describe('实际题型等级', () => {
     for (const lv of [1, 2, 4] as QuestionType[]) {
       expect(effectiveLevel(item({ question_level: lv }), true)).toBe(lv)
     }
+  })
+})
+
+describe('专项模式题型', () => {
+  it('无模式时与普通训练完全一致', () => {
+    for (const lv of [1, 2, 4, 5] as QuestionType[]) {
+      const it_ = item({ question_level: lv })
+      expect(drillLevel(null, it_, true)).toBe(effectiveLevel(it_, true))
+    }
+  })
+
+  it('拼写专项对所有频段都出拼写题', () => {
+    // S10 的频段限制针对自动阶梯——系统不该擅自把低频词推到最难题型。
+    // 但用户主动选了拼写专项还收到选择题，只会以为功能坏了
+    for (const band of [1, 3, 5]) {
+      expect(drillLevel('spelling', item({ question_level: 1, frequency_band: band }), true)).toBe(5)
+    }
+  })
+
+  it('拼写专项不受词自身等级影响', () => {
+    // 刚学的词也能拿来练拼写，那正是这个模式存在的意义
+    expect(drillLevel('spelling', item({ question_level: 1 }), true)).toBe(5)
+  })
+
+  it('听写模式强制听音辨词', () => {
+    expect(drillLevel('dictation', item({ question_level: 1 }), true)).toBe(3)
+    expect(drillLevel('dictation', item({ question_level: 5 }), true)).toBe(3)
+  })
+
+  it('无音频时听写模式退回普通题型而非出无声题', () => {
+    // 没有声音的听写不是「更难」，是根本无解
+    const it_ = item({ question_level: 4 })
+    expect(drillLevel('dictation', it_, false)).toBe(4)
+    expect(drillLevel('dictation', item({ question_level: 3 }), false)).toBe(2)
+  })
+
+  it('无音频不影响拼写专项', () => {
+    // 拼写题不需要发音，不该被音频缺失连累
+    expect(drillLevel('spelling', item({ question_level: 1 }), false)).toBe(5)
   })
 })
 

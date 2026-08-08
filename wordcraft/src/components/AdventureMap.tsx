@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
 import * as api from '../data/api'
+import type { DrillMode } from '../core/question'
 import type { OverallStats, Session, SessionType } from '../core/types'
 
 interface AdventureMapProps {
-  onStartTraining: (type: SessionType) => void
+  onStartTraining: (type: SessionType, drill?: DrillMode) => void
   onOpenStats: () => void
   onOpenAlbum: () => void
   onOpenHomestead: () => void
@@ -12,6 +13,18 @@ interface AdventureMapProps {
   onOpenLibrary: () => void
   stats: OverallStats | null
 }
+
+/**
+ * 自由练习的三种模式。spec §4.2 F8「不限量刷词、拼写专项、听写模式」。
+ *
+ * 拼写与听写只是**强制题型**，队列与积分与普通自由练习完全相同——
+ * 它们不是独立玩法，是同一套练习的不同考查角度。
+ */
+const DRILL_OPTIONS: { mode: DrillMode; label: string; icon: string; hint: string }[] = [
+  { mode: null, label: '不限量刷词', icon: '⚔️', hint: '按每个词当前的掌握程度出题' },
+  { mode: 'spelling', label: '拼写专项', icon: '✍️', hint: '全部改为看释义拼单词' },
+  { mode: 'dictation', label: '听写模式', icon: '🎧', hint: '全部改为听发音选词' },
+]
 
 const PORTALS: { key: SessionType; name: string; time: string; image: string; color: string; glowColor: string }[] = [
   {
@@ -62,12 +75,20 @@ export default function AdventureMap({ onStartTraining, onOpenStats, onOpenAlbum
   const [sessions, setSessions] = useState<Session[]>([])
   const [zones, setZones] = useState<api.ZoneProgress[]>([])
   const [hoveredPortal, setHoveredPortal] = useState<string | null>(null)
+  const [pickingDrill, setPickingDrill] = useState(false)
+  // 听写模式需要发音。关掉 TTS 还让人选，进去只会得到一道无声的题
+  const [audioOn, setAudioOn] = useState(true)
 
   const loadSessions = useCallback(async () => {
     try {
-      const [s, z] = await Promise.all([api.getTodaySessions(), api.getZoneProgress()])
+      const [s, z, tts] = await Promise.all([
+        api.getTodaySessions(),
+        api.getZoneProgress(),
+        api.getSetting('tts_provider'),
+      ])
       setSessions(s)
       setZones(z)
+      setAudioOn(tts !== 'off')
     } catch {
       setSessions([])
       setZones([])
@@ -304,7 +325,7 @@ export default function AdventureMap({ onStartTraining, onOpenStats, onOpenAlbum
       {/* ===== 快捷操作 ===== */}
       <div className="grid grid-cols-3 gap-2">
         <button
-          onClick={() => onStartTraining('free')}
+          onClick={() => setPickingDrill(true)}
           className="btn-game hud-panel rounded-lg py-2.5 text-sm font-bold transition-all hover:border-wc-primary/50 flex items-center justify-center gap-1.5"
           style={{ borderColor: 'rgba(60, 60, 100, 0.8)' }}
         >
@@ -365,6 +386,60 @@ export default function AdventureMap({ onStartTraining, onOpenStats, onOpenAlbum
           )}
         </button>
       </div>
+
+      {pickingDrill && (
+        <div
+          className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"
+          onClick={() => setPickingDrill(false)}
+        >
+          <div
+            className="bg-wc-surface border border-wc-border rounded-2xl p-5 max-w-sm w-full pop-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-bold font-game text-center mb-1">自由探险</h3>
+            <p className="text-xs text-wc-text-muted text-center mb-4">
+              练多少都不影响连续天数，也不占用今天的时段
+            </p>
+
+            <div className="space-y-2">
+              {DRILL_OPTIONS.map((opt) => {
+                const disabled = opt.mode === 'dictation' && !audioOn
+                return (
+                  <button
+                    key={opt.label}
+                    disabled={disabled}
+                    onClick={() => {
+                      setPickingDrill(false)
+                      onStartTraining('free', opt.mode)
+                    }}
+                    className={`w-full rounded-xl p-3 text-left border transition flex items-center gap-3 ${
+                      disabled
+                        ? 'border-wc-border/50 bg-wc-surface/50 opacity-50 cursor-default'
+                        : 'border-wc-border bg-wc-surface-2 hover:border-wc-primary cursor-pointer'
+                    }`}
+                  >
+                    <span className="text-2xl">{opt.icon}</span>
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-sm font-bold">{opt.label}</span>
+                      <span className="block text-xs text-wc-text-muted">
+                        {/* 不可选时说明原因，而不是让按钮无声变灰 */}
+                        {disabled ? '需要先在设置里开启发音' : opt.hint}
+                      </span>
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+
+            <button
+              onClick={() => setPickingDrill(false)}
+              className="w-full mt-3 py-2 text-sm text-wc-text-muted hover:text-wc-text transition"
+            >
+              取消
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

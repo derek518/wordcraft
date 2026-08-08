@@ -48,6 +48,38 @@ export function effectiveLevel(item: QueueItem, audioAvailable: boolean): Questi
   return level as QuestionType
 }
 
+/**
+ * 自由练习的专项模式（spec §4.2 F8「拼写专项、听写模式」）。
+ *
+ * `null` 表示按每个词自己的等级出题，即普通训练。
+ */
+export type DrillMode = 'spelling' | 'dictation' | null
+
+/** 专项模式强制的题型。 */
+const DRILL_LEVEL: Record<Exclude<DrillMode, null>, QuestionType> = {
+  spelling: 5,
+  dictation: AUDIO_QUESTION_LEVEL,
+}
+
+/**
+ * 专项模式下实际使用的题型。
+ *
+ * **这里刻意不套用 `effectiveLevel` 的 S10 频段限制。** 那条限制针对的是
+ * 自动阶梯——系统不该擅自把低频词推到最难的题型上。专项模式是用户主动选的，
+ * 选了「拼写专项」却收到选择题，只会让人以为功能坏了。
+ *
+ * 音频限制则保留：听写模式没有声音就是一道无解的题，不是难度问题。
+ */
+export function drillLevel(
+  mode: DrillMode,
+  item: QueueItem,
+  audioAvailable: boolean,
+): QuestionType {
+  if (mode === null) return effectiveLevel(item, audioAvailable)
+  if (mode === 'dictation' && !audioAvailable) return effectiveLevel(item, audioAvailable)
+  return DRILL_LEVEL[mode]
+}
+
 /** Fisher-Yates 洗牌。 */
 function shuffle<T>(items: T[]): T[] {
   const out = [...items]

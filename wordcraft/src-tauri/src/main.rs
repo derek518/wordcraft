@@ -4,6 +4,7 @@
 
 use tauri::Manager;
 
+mod boss;
 mod cards;
 mod commands;
 mod db;
@@ -87,6 +88,9 @@ fn main() {
             // 赛季赛道
             season::get_season,
             season::redeem_points,
+            // 魔王讨伐
+            boss::get_boss_words,
+            boss::defeat_boss,
             // 统计
             commands::stats::get_today_stats,
             commands::stats::get_overall_stats,

@@ -10,7 +10,7 @@
 set -uo pipefail
 
 DB="$HOME/Library/Application Support/com.wordcraft.app/wordcraft.db"
-AUDIO="wordcraft/public/audio"
+AUDIO="wordcraft/src-tauri/audio"
 PASS=0
 FAIL=0
 

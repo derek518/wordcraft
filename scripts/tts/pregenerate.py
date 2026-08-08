@@ -23,7 +23,9 @@ from pathlib import Path
 import edge_tts
 
 LIBRARY = Path("wordcraft/public/library.json")
-OUT_DIR = Path("wordcraft/public/audio")
+# 放 src-tauri/ 而非 public/：public 下的文件会被 Vite 复制进 dist
+# 再嵌入二进制，与 Tauri resources 各存一份，白白多出 44MB
+OUT_DIR = Path("wordcraft/src-tauri/audio")
 
 # en-US-AriaNeural：清晰、语速适中的美音。教材与高考听力以美音为主
 VOICE = "en-US-AriaNeural"

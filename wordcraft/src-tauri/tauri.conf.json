@@ -64,7 +64,7 @@
       }
     },
     "resources": {
-      "../public/audio/*": "audio/"
+      "audio/*": "audio/"
     }
   }
 }

@@ -12,14 +12,6 @@ interface WordTrainerProps {
 }
 
 
-const LEVEL_LABELS: Record<number, string> = {
-  1: '英→中',
-  2: '中→英',
-  3: '听音辨词',
-  4: '例句填空',
-  5: '拼写',
-}
-
 const SESSION_NAMES: Record<SessionType, string> = {
   morning: '晨曦之门',
   noon: '烈日之门',
@@ -27,11 +19,18 @@ const SESSION_NAMES: Record<SessionType, string> = {
   free: '自由探险',
 }
 
-const SESSION_COLORS: Record<SessionType, string> = {
-  morning: 'from-orange-500 to-yellow-400',
-  noon: 'from-yellow-500 to-amber-400',
-  evening: 'from-indigo-500 to-purple-400',
-  free: 'from-wc-primary to-wc-accent',
+const SESSION_COLORS: Record<SessionType, { gradient: string; glow: string }> = {
+  morning: { gradient: 'from-orange-500 to-yellow-400', glow: 'rgba(251, 146, 60, 0.5)' },
+  noon: { gradient: 'from-yellow-500 to-amber-400', glow: 'rgba(245, 158, 11, 0.5)' },
+  evening: { gradient: 'from-indigo-500 to-purple-400', glow: 'rgba(168, 85, 247, 0.5)' },
+  free: { gradient: 'from-wc-primary to-wc-accent', glow: 'rgba(124, 58, 237, 0.5)' },
+}
+
+/** 根据词频频段返回对应元素水晶图片 */
+function crystalForBand(band: number, state: 'bright' | 'faint' | 'dim' = 'bright'): string {
+  const elements = ['grass', 'water', 'fire', 'thunder', 'ice', 'rock']
+  const idx = Math.min(Math.max(band - 1, 0), elements.length - 1)
+  return `/assets/crystals/crystal_${elements[idx]}_${state}.png`
 }
 
 type Phase = 'loading' | 'error' | 'answering' | 'complete'
@@ -57,39 +56,45 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
   const [xpFloat, setXpFloat] = useState<{ xp: number; x: number; y: number } | null>(null)
   const [audioError, setAudioError] = useState('')
 
-  /**
-   * 发音是否可用，由 `tts_provider` 设置决定。
-   *
-   * 关掉发音后 Lv.3 听音辨词必须降级——否则用户面对的是一个不会响的喇叭，
-   * 只能盲猜。用 ref 而非 state：它在会话中途不变，且 `prepareQuestion`
-   * 需要同步读到它，走 state 会因异步更新拿到上一轮的值。
-   */
+  /** 粒子爆炸状态 */
+  const [particles, setParticles] = useState<{ id: number; x: number; y: number; color: string; tx: number; ty: number }[]>([])
+  const particleIdRef = useRef(0)
+
   const audioAvailable = useRef(false)
+  /** 结算是否已在进行中。用 ref 而非 state：state 更新是异步的，
+   *  在它生效前重复点击仍会穿透。 */
+  const finishing = useRef(false)
   const startedAt = useRef(0)
   const cardRef = useRef<HTMLDivElement>(null)
 
   const current = queue[cursor]
 
-  /**
-   * 组题。题型由词的 `question_level` 决定（contracts §6），干扰项的语言方向
-   * 随之翻转——Lv.1 选中文释义，Lv.2 以上选英文单词，后端按等级返回对应内容。
-   *
-   * 审计 D5 的硬编码释义数组已删除：那个数组恰好是当时 52 个词的释义，
-   * 词库一扩就全线失效。
-   */
+  const spawnParticles = useCallback((x: number, y: number, color: string) => {
+    const newParticles = Array.from({ length: 12 }, (_, i) => {
+      const angle = (i / 12) * Math.PI * 2
+      const dist = 60 + Math.random() * 60
+      return {
+        id: particleIdRef.current++,
+        x,
+        y,
+        color,
+        tx: Math.cos(angle) * dist,
+        ty: Math.sin(angle) * dist,
+      }
+    })
+    setParticles((prev) => [...prev, ...newParticles])
+    setTimeout(() => {
+      setParticles((prev) => prev.filter((p) => !newParticles.find((np) => np.id === p.id)))
+    }, 900)
+  }, [])
+
   const prepareQuestion = useCallback(async (item: QueueItem) => {
     const level = effectiveLevel(item, audioAvailable.current)
     const distractors = level >= 5 ? [] : await api.getDistractorPool(item.word_id, level, 3)
-
     setQuestion(buildQuestion({ item, level, distractors }))
     setSpellInput('')
-
-    // 听音辨词自动播一次：题面只有一个喇叭图标，不自动播的话用户得先点一下
-    // 才知道要听什么，而计时已经开始了
     if (level === 3) {
-      void api.playWordAudio(item.word).catch(() => {
-        // 首播失败不阻断答题，用户可点喇叭重试并看到错误
-      })
+      void api.playWordAudio(item.word).catch(() => {})
     }
     startedAt.current = Date.now()
   }, [])
@@ -97,8 +102,6 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
   const load = useCallback(async () => {
     setPhase('loading')
     try {
-      // 音效与发音设置在会话开始时读取一次——每题都查一次数据库没有意义，
-      // 用户不会在答题中途改设置
       const [sound, tts] = await Promise.all([
         api.getSetting('sound_enabled'),
         api.getSetting('tts_provider'),
@@ -119,7 +122,6 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
       await prepareQuestion(items[0])
       setPhase('answering')
     } catch (e) {
-      // 不回退到本地假数据（审计 D6）——后端不可用必须让用户看见
       setErrorMessage(e instanceof Error ? e.message : String(e))
       setPhase('error')
     }
@@ -129,13 +131,6 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
     load()
   }, [load])
 
-  /**
-   * 统一的作答处理。选择题传选项文本，拼写题传输入内容。
-   *
-   * 正误判定按题型分流：拼写题要求精确匹配（忽略大小写与空白），
-   * 选择题比对答案文本——注意答案随题型在释义与单词之间切换，
-   * 不能固定拿 `item.meaning` 去比。
-   */
   const submitAnswer = async (input: string) => {
     if (isRevealed || !current || !question) return
 
@@ -147,19 +142,23 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
     setIsCorrect(correct)
     setIsRevealed(true)
 
-    // 音效先于任何 await——spec F6 要求反馈 <100ms，
-    // 排在 IPC 之后就变成「延迟到网络往返之后才响」
     if (correct) {
       playCorrect(combo)
+      // 粒子爆炸
+      if (cardRef.current) {
+        const rect = cardRef.current.getBoundingClientRect()
+        const centerX = rect.left + rect.width / 2
+        const centerY = rect.top + rect.height / 2
+        const colors = ['#22c55e', '#4ade80', '#fbbf24', '#a855f7', '#06b6d4']
+        const color = colors[Math.floor(Math.random() * colors.length)]
+        spawnParticles(centerX, centerY, color)
+      }
     } else {
       playIncorrect()
     }
 
     const { dto, requeueInSession } = gradeAnswer({
       item: current,
-      // 用实际出题的等级而非词的 question_level：Lv.3 无音频时降为 Lv.2、
-      // 低频词的 Lv.5 降为 Lv.4，评级阈值必须跟着实际题型走，
-      // 否则会用拼写题的宽松阈值去衡量一道四选一
       questionType: question.type,
       isCorrect: correct,
       reactionMs,
@@ -176,12 +175,11 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
     if (cardRef.current && gained > 0) {
       const rect = cardRef.current.getBoundingClientRect()
       setXpFloat({ xp: gained, x: rect.left + rect.width / 2, y: rect.top })
-      setTimeout(() => setXpFloat(null), 1000)
+      setTimeout(() => setXpFloat(null), 1200)
     }
 
     try {
       await api.commitReview(dto)
-      // spec F2：答错的词当场排到队尾再考一次
       if (requeueInSession) {
         setQueue((q) => [...q, { ...current, app_state: dto.appState, reinforce_streak: dto.reinforceStreak }])
       }
@@ -208,6 +206,12 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
       return
     }
 
+    // 防重入：handleNext 是异步的，在 finishSession 返回之前 isRevealed
+    // 还没更新，按钮仍可点击——快速点两下就会发出两次结算请求。
+    // 后端会拒绝重复结算（否则 XP 与抽卡券翻倍），但那个拒绝不该让用户看见
+    if (finishing.current) return
+    finishing.current = true
+
     try {
       if (sessionId !== null) await api.finishSession(sessionId, totalXp)
       playSessionComplete()
@@ -215,6 +219,8 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
     } catch (e) {
       setErrorMessage(e instanceof Error ? e.message : String(e))
       setPhase('error')
+      // 结算失败时放开重入，让「重试」真的能重试
+      finishing.current = false
     }
   }
 
@@ -224,40 +230,48 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
       setAudioError('')
       await api.playWordAudio(current.word)
     } catch (e) {
-      // 发音失败不打断答题，但必须让用户看见——否则点了没反应，
-      // 分不清是「坏了」还是「本来就没声音」
       setAudioError(e instanceof Error ? e.message : String(e))
     }
   }
 
+  const colors = SESSION_COLORS[sessionType]
+  const progress = queue.length > 0 ? (cursor / queue.length) * 100 : 0
+
+  // ============ 加载态 ============
   if (phase === 'loading') {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="text-center">
-          <div className="text-4xl mb-4 animate-pulse">⚡</div>
-          <p className="text-wc-text-muted">正在召唤水晶...</p>
+          <div className="relative w-16 h-16 mx-auto mb-6">
+            <img src="/assets/crystals/crystal_fire_bright.png" alt="" className="w-full h-full object-contain animate-pulse crystal-shimmer" />
+            <div className="absolute inset-0 rounded-full animate-ping opacity-20 bg-wc-primary" />
+          </div>
+          <p className="text-wc-text-muted text-sm tracking-wider">正在召唤水晶...</p>
         </div>
       </div>
     )
   }
 
+  // ============ 错误态 ============
   if (phase === 'error') {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="text-center max-w-md">
-          <div className="text-4xl mb-4">🌫️</div>
+          <div className="w-20 h-20 mx-auto mb-4 opacity-50">
+            <img src="/assets/ui/boss.png" alt="" className="w-full h-full object-contain" />
+          </div>
           <h2 className="text-xl font-bold mb-2">传送门无法开启</h2>
           <p className="text-wc-text-muted text-sm mb-6 break-words">{errorMessage}</p>
           <div className="flex gap-3 justify-center">
             <button
               onClick={load}
-              className="px-6 py-2.5 bg-gradient-to-r from-wc-primary to-wc-primary-bright rounded-lg font-bold hover:opacity-90 transition"
+              className="px-6 py-2.5 bg-gradient-to-r from-wc-primary to-wc-primary-bright rounded-xl font-bold hover:opacity-90 transition btn-game"
             >
               重试
             </button>
             <button
               onClick={onFinish}
-              className="px-6 py-2.5 bg-wc-surface-2 border border-wc-border rounded-lg font-bold hover:border-wc-primary transition"
+              className="px-6 py-2.5 bg-wc-surface-2 border border-wc-border rounded-xl font-bold hover:border-wc-primary transition btn-game"
             >
               返回营地
             </button>
@@ -267,35 +281,47 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
     )
   }
 
+  // ============ 完成态 ============
   if (phase === 'complete') {
     return (
       <div className="flex items-center justify-center min-h-[500px]">
-        <div className="text-center pop-in">
-          <div className="text-6xl mb-4">🎉</div>
-          <h2 className="text-2xl font-bold mb-2">今日冒险通关！</h2>
-          <div className="bg-wc-surface border border-wc-border rounded-xl p-6 mb-6 max-w-sm mx-auto">
+        <div className="text-center pop-in-bounce">
+          <div className="relative w-24 h-24 mx-auto mb-6">
+            <img src="/assets/crystals/crystal_fire_bright.png" alt="" className="w-full h-full object-contain crystal-shimmer" />
+            <div className="absolute -inset-4 rounded-full animate-ping opacity-30 bg-wc-gold" />
+          </div>
+          <h2 className="text-3xl font-bold mb-2 tracking-wide">今日冒险通关！</h2>
+          <p className="text-wc-text-muted text-sm mb-6">水晶已收集，家园等待你的归来</p>
+
+          <div className="hud-panel rounded-2xl p-6 mb-6 max-w-sm mx-auto border border-wc-gold/20">
             <div className="grid grid-cols-2 gap-4 text-sm">
-              <div>
-                <div className="text-wc-text-muted">收集水晶</div>
-                <div className="text-xl font-bold text-wc-accent">{answeredCount} 颗</div>
+              <div className="text-center p-3 rounded-xl bg-wc-bg/50">
+                <img src="/assets/crystals/crystal_water_bright.png" alt="" className="w-8 h-8 mx-auto mb-2 object-contain" />
+                <div className="text-wc-text-muted text-xs">收集水晶</div>
+                <div className="text-xl font-bold text-wc-accent font-game-mono">{answeredCount}</div>
               </div>
-              <div>
-                <div className="text-wc-text-muted">获得 XP</div>
-                <div className="text-xl font-bold text-wc-gold">{totalXp}</div>
+              <div className="text-center p-3 rounded-xl bg-wc-bg/50">
+                <img src="/assets/effects/star.png" alt="" className="w-8 h-8 mx-auto mb-2 object-contain" />
+                <div className="text-wc-text-muted text-xs">获得 XP</div>
+                <div className="text-xl font-bold text-wc-gold font-game-mono">{totalXp}</div>
               </div>
-              <div>
-                <div className="text-wc-text-muted">最高连击</div>
-                <div className="text-xl font-bold text-wc-fire">{bestCombo}</div>
+              <div className="text-center p-3 rounded-xl bg-wc-bg/50">
+                <div className="text-2xl mb-1">🔥</div>
+                <div className="text-wc-text-muted text-xs">最高连击</div>
+                <div className="text-xl font-bold text-wc-fire font-game-mono">{bestCombo}</div>
               </div>
-              <div>
-                <div className="text-wc-text-muted">传送门</div>
-                <div className="text-xl font-bold">{SESSION_NAMES[sessionType]}</div>
+              <div className="text-center p-3 rounded-xl bg-wc-bg/50">
+                <div className="text-2xl mb-1">🚪</div>
+                <div className="text-wc-text-muted text-xs">传送门</div>
+                <div className="text-lg font-bold">{SESSION_NAMES[sessionType]}</div>
               </div>
             </div>
           </div>
+
           <button
             onClick={onFinish}
-            className="px-8 py-3 bg-gradient-to-r from-wc-primary to-wc-primary-bright rounded-lg font-bold hover:opacity-90 transition"
+            className="px-10 py-3 bg-gradient-to-r from-wc-primary to-wc-primary-bright rounded-xl font-bold hover:opacity-90 transition btn-game text-lg"
+            style={{ boxShadow: `0 0 20px rgba(124, 58, 237, 0.4)` }}
           >
             返回营地
           </button>
@@ -304,137 +330,228 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
     )
   }
 
-  // question 与 current 同时就绪：prepareQuestion 在切题时一并设置，
-  // 分开判空会让渲染短暂读到上一题的题面
   if (!current || !question) return null
 
-  const progress = (cursor / queue.length) * 100
-
+  // ============ 答题态 ============
   return (
-    <div className="max-w-lg mx-auto">
-      <div className="flex items-center justify-between mb-4">
-        <button onClick={onFinish} className="text-sm text-wc-text-muted hover:text-wc-text transition">
-          ← 返回
-        </button>
+    <div className="max-w-lg mx-auto relative">
+      {/* 粒子爆炸层 */}
+      {particles.map((p) => (
         <div
-          className={`text-xs font-bold px-3 py-1 rounded-full bg-gradient-to-r ${SESSION_COLORS[sessionType]} text-white`}
+          key={p.id}
+          className="particle"
+          style={{
+            left: p.x,
+            top: p.y,
+            backgroundColor: p.color,
+            boxShadow: `0 0 6px ${p.color}`,
+            '--tx': `${p.tx}px`,
+            '--ty': `${p.ty}px`,
+          } as React.CSSProperties}
+        />
+      ))}
+
+      {/* 顶部 HUD */}
+      <div className="flex items-center justify-between mb-5">
+        <button
+          onClick={onFinish}
+          className="text-sm text-wc-text-muted hover:text-wc-text transition flex items-center gap-1"
         >
-          {SESSION_NAMES[sessionType]}
+          <span>←</span> 返回
+        </button>
+
+        <div className="flex items-center gap-2">
+          {/* 传送门标识 */}
+          <div
+            className={`text-xs font-bold px-3 py-1 rounded-full bg-gradient-to-r ${colors.gradient} text-white`}
+            style={{ boxShadow: `0 0 12px ${colors.glow}` }}
+          >
+            {SESSION_NAMES[sessionType]}
+          </div>
+          {/* 题型标识 */}
+          <div className="text-xs px-2 py-1 rounded-lg bg-wc-surface-2 border border-wc-border text-wc-text-muted font-game-mono">
+            Lv.{question.type}
+          </div>
         </div>
-        {/* 题型标识：同一个词在不同掌握阶段考法不同，
-            不标出来用户会以为界面出了错 */}
-        <div className="text-xs px-2 py-1 rounded bg-wc-surface-2 border border-wc-border text-wc-text-muted">
-          Lv.{question.type} {LEVEL_LABELS[question.type]}
-        </div>
-        <div className="text-sm font-mono">
-          <span className="text-wc-accent">{cursor + 1}</span>
+
+        <div className="text-sm font-game-mono">
+          <span className="text-wc-accent font-bold">{cursor + 1}</span>
           <span className="text-wc-text-muted">/{queue.length}</span>
         </div>
       </div>
 
-      <div className="h-1.5 bg-wc-surface-2 rounded-full mb-6 overflow-hidden">
+      {/* 进度条 */}
+      <div className="h-2 bg-wc-bg-2 rounded-full mb-5 overflow-hidden border border-wc-border/30">
         <div
-          className="h-full bg-gradient-to-r from-wc-primary to-wc-accent rounded-full transition-all duration-500"
-          style={{ width: `${progress}%` }}
-        />
+          className="h-full rounded-full transition-all duration-500 relative"
+          style={{
+            width: `${progress}%`,
+            background: `linear-gradient(90deg, #7c3aed, #a855f7, #06b6d4)`,
+            boxShadow: '0 0 10px rgba(124, 58, 237, 0.5)',
+          }}
+        >
+          <div className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-white shadow-[0_0_10px_white]" />
+        </div>
       </div>
 
+      {/* 连击 */}
       {combo > 0 && (
         <div className="text-center mb-4">
-          <span className="inline-flex items-center gap-1 px-3 py-1 bg-wc-fire/20 text-wc-fire rounded-full text-sm font-bold">
-            🔥 连击 ×{combo}
+          <span
+            className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-bold ${
+              combo >= 5 ? 'combo-flame' : ''
+            }`}
+            style={{
+              background: combo >= 5
+                ? 'linear-gradient(135deg, rgba(239, 68, 68, 0.2), rgba(251, 191, 36, 0.2))'
+                : 'rgba(239, 68, 68, 0.1)',
+              border: `1px solid ${combo >= 5 ? 'rgba(251, 191, 36, 0.4)' : 'rgba(239, 68, 68, 0.2)'}`,
+              color: combo >= 5 ? '#fbbf24' : '#f87171',
+              boxShadow: combo >= 5 ? '0 0 20px rgba(251, 191, 36, 0.2)' : 'none',
+            }}
+          >
+            <span className="text-base">🔥</span>
+            连击 ×{combo}
           </span>
         </div>
       )}
 
+      {/* 单词卡片 */}
       <div
         ref={cardRef}
-        className={`bg-wc-surface border border-wc-border rounded-xl p-6 mb-6 transition-all ${
-          isRevealed && !isCorrect ? 'shake' : ''
+        className={`relative rounded-2xl overflow-hidden mb-6 transition-all duration-300 ${
+          isRevealed && !isCorrect ? 'shake-hard' : ''
         }`}
+        style={{
+          background: 'linear-gradient(135deg, rgba(22, 22, 42, 0.98), rgba(14, 14, 30, 0.98))',
+          border: isRevealed
+            ? `2px solid ${isCorrect ? 'rgba(34, 197, 94, 0.5)' : 'rgba(239, 68, 68, 0.5)'}`
+            : '1px solid rgba(42, 42, 74, 0.8)',
+          boxShadow: isRevealed
+            ? isCorrect
+              ? '0 0 30px rgba(34, 197, 94, 0.2), inset 0 0 30px rgba(34, 197, 94, 0.05)'
+              : '0 0 30px rgba(239, 68, 68, 0.2), inset 0 0 30px rgba(239, 68, 68, 0.05)'
+            : '0 8px 32px rgba(0, 0, 0, 0.3)',
+        }}
       >
-        <div className="text-center mb-6">
-          {question.type === 3 && !isRevealed ? (
-            // 听音辨词：作答前不能显示拼写，否则退化成认读题
-            <button
-              onClick={handlePlayAudio}
-              className="text-6xl py-4 hover:scale-110 transition-transform"
-              aria-label="播放发音"
-            >
-              🔊
-            </button>
-          ) : question.type === 4 ? (
-            // 例句填空：题干是挖空后的句子，单词本身不出现
-            <div className="text-xl leading-relaxed py-2">{question.prompt}</div>
-          ) : question.type >= 5 ? (
-            <>
-              <div className="text-2xl font-bold mb-3">{question.prompt}</div>
-              <div className="text-3xl font-mono tracking-[0.3em] text-wc-text-muted">
-                {question.hint}
-              </div>
-            </>
-          ) : question.type === 2 ? (
-            <div className="text-3xl font-bold py-2">{question.prompt}</div>
-          ) : (
-            <>
-              <div className="text-4xl font-bold mb-2 tracking-wide">{current.word}</div>
-              <button
-                className="text-wc-accent text-sm cursor-pointer hover:underline inline-flex items-center gap-1"
-                onClick={handlePlayAudio}
-              >
-                🔊 {current.phonetic}
-              </button>
-            </>
-          )}
-          {audioError && (
-            <div className="text-xs text-wc-warning mt-2 break-words">
-              发音不可用：{audioError}
-            </div>
-          )}
-        </div>
-
+        {/* 顶部装饰线 */}
         <div
-          className={`transition-all duration-500 ${
-            isRevealed ? 'opacity-100 max-h-40' : 'opacity-0 max-h-0 overflow-hidden'
-          }`}
-        >
-          <div
-            className={`p-4 rounded-lg mb-4 ${
-              isCorrect
-                ? 'bg-wc-success/10 border border-wc-success/30'
-                : 'bg-wc-danger/10 border border-wc-danger/30'
-            }`}
-          >
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-xl">{isCorrect ? '✨' : '💫'}</span>
-              <span className={`font-bold ${isCorrect ? 'text-wc-success' : 'text-wc-danger'}`}>
-                {isCorrect ? '水晶已点亮！' : '水晶尚未点亮...'}
-              </span>
-            </div>
-            {/* Lv.2 以上作答前不显示拼写，揭晓时必须补上——
-                否则答错的人根本不知道正确的词长什么样 */}
-            {question.concealWord && (
-              <div className="text-lg font-bold mb-1">
-                {current.word}
-                <span className="text-sm text-wc-accent font-normal ml-2">
-                  {current.phonetic}
-                </span>
+          className="h-1 w-full"
+          style={{
+            background: isRevealed
+              ? isCorrect
+                ? 'linear-gradient(90deg, transparent, #22c55e, transparent)'
+                : 'linear-gradient(90deg, transparent, #ef4444, transparent)'
+              : 'linear-gradient(90deg, transparent, rgba(124, 58, 237, 0.5), transparent)',
+          }}
+        />
+
+        <div className="p-6">
+          {/* 水晶图标 + 单词 */}
+          <div className="text-center mb-5">
+            {!isRevealed && (
+              <div className="flex justify-center mb-3">
+                <img
+                  src={crystalForBand(current.frequency_band, 'bright')}
+                  alt=""
+                  className="w-12 h-12 object-contain crystal-shimmer"
+                />
               </div>
             )}
-            <div className="text-sm">
-              <span className="text-wc-text-muted">释义：</span>
-              <span className="font-bold">{current.meaning}</span>
-              <span className="text-wc-text-muted ml-2">({current.pos})</span>
-            </div>
+
+            {question.type === 3 && !isRevealed ? (
+              <button
+                onClick={handlePlayAudio}
+                className="text-6xl py-4 hover:scale-110 transition-transform drop-shadow-[0_0_20px_rgba(6,182,212,0.5)]"
+                aria-label="播放发音"
+              >
+                🔊
+              </button>
+            ) : question.type === 4 ? (
+              <div className="text-xl leading-relaxed py-2">{question.prompt}</div>
+            ) : question.type >= 5 ? (
+              <>
+                <div className="text-2xl font-bold mb-3">{question.prompt}</div>
+                <div className="text-3xl font-mono tracking-[0.3em] text-wc-text-muted">
+                  {question.hint}
+                </div>
+              </>
+            ) : question.type === 2 ? (
+              <div className="text-3xl font-bold py-2">{question.prompt}</div>
+            ) : (
+              <>
+                <div className="text-5xl font-bold mb-3 tracking-wide font-game">{current.word}</div>
+                <button
+                  className="text-wc-accent text-sm cursor-pointer hover:underline inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-wc-accent/10 border border-wc-accent/20 transition hover:bg-wc-accent/20"
+                  onClick={handlePlayAudio}
+                >
+                  <span>🔊</span>
+                  <span className="font-game-mono">{current.phonetic}</span>
+                </button>
+              </>
+            )}
+            {audioError && (
+              <div className="text-xs text-wc-warning mt-2 break-words">
+                发音不可用：{audioError}
+              </div>
+            )}
           </div>
 
-          <div className="text-sm text-wc-text-muted bg-wc-bg rounded-lg p-3">
-            <div className="mb-1">📝 {current.example_1}</div>
-            {current.example_2 && <div>📝 {current.example_2}</div>}
+          {/* 揭晓面板 */}
+          <div
+            className={`transition-all duration-500 ${
+              isRevealed ? 'opacity-100 max-h-60' : 'opacity-0 max-h-0 overflow-hidden'
+            }`}
+          >
+            <div
+              className={`p-4 rounded-xl mb-4 border ${
+                isCorrect
+                  ? 'bg-wc-success/5 border-wc-success/30'
+                  : 'bg-wc-danger/5 border-wc-danger/30'
+              }`}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <img
+                  src={isCorrect ? '/assets/effects/star.png' : '/assets/ui/boss.png'}
+                  alt=""
+                  className="w-6 h-6 object-contain"
+                />
+                <span className={`font-bold text-lg ${isCorrect ? 'text-wc-success' : 'text-wc-danger'}`}>
+                  {isCorrect ? '水晶已点亮！' : '水晶尚未点亮...'}
+                </span>
+              </div>
+              {question.concealWord && (
+                <div className="text-lg font-bold mb-1 font-game">
+                  {current.word}
+                  <span className="text-sm text-wc-accent font-normal ml-2 font-game-mono">
+                    {current.phonetic}
+                  </span>
+                </div>
+              )}
+              <div className="text-sm">
+                <span className="text-wc-text-muted">释义：</span>
+                <span className="font-bold">{current.meaning}</span>
+                <span className="text-wc-text-muted ml-2">({current.pos})</span>
+              </div>
+            </div>
+
+            <div className="text-sm text-wc-text-muted bg-wc-bg/50 rounded-xl p-3 border border-wc-border/30">
+              <div className="mb-1 flex items-start gap-2">
+                <span className="text-wc-accent">📝</span>
+                <span>{current.example_1}</span>
+              </div>
+              {current.example_2 && (
+                <div className="flex items-start gap-2">
+                  <span className="text-wc-accent">📝</span>
+                  <span>{current.example_2}</span>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
 
+      {/* 选项/输入区 */}
       {question.type >= 5 ? (
         <form
           className="mb-6"
@@ -453,19 +570,19 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
             autoCorrect="off"
             spellCheck={false}
             placeholder="拼出这个单词…"
-            className={`w-full px-4 py-4 rounded-lg border bg-wc-surface-2 text-center text-2xl font-mono tracking-wider outline-none transition-all ${
+            className={`w-full px-4 py-4 rounded-xl border bg-wc-surface-2 text-center text-2xl font-mono tracking-wider outline-none transition-all ${
               isRevealed
                 ? isCorrect
                   ? 'border-wc-success text-wc-success'
                   : 'border-wc-danger text-wc-danger'
-                : 'border-wc-border focus:border-wc-primary'
+                : 'border-wc-border focus:border-wc-primary focus:shadow-[0_0_15px_rgba(124,58,237,0.3)]'
             }`}
           />
           {!isRevealed && (
             <button
               type="submit"
               disabled={!spellInput.trim()}
-              className="w-full mt-3 py-3 bg-gradient-to-r from-wc-primary to-wc-primary-bright rounded-lg font-bold hover:opacity-90 transition disabled:opacity-40 disabled:cursor-not-allowed"
+              className="w-full mt-3 py-3 bg-gradient-to-r from-wc-primary to-wc-primary-bright rounded-xl font-bold hover:opacity-90 transition disabled:opacity-40 disabled:cursor-not-allowed btn-game"
             >
               确认
             </button>
@@ -474,18 +591,18 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
       ) : (
         <div className="grid grid-cols-2 gap-3 mb-6">
           {question.options.map((option, i) => {
-            let btnClass =
-              'bg-wc-surface-2 border-wc-border hover:border-wc-primary hover:bg-wc-surface'
+            let btnClass = 'bg-wc-surface-2/80 border-wc-border/60 hover:border-wc-primary hover:bg-wc-surface-2'
+            let btnStyle: React.CSSProperties = {}
 
             if (isRevealed) {
-              // 与 question.answer 比对而非 item.meaning——答案随题型在
-              // 释义与单词之间切换，固定比释义会让 Lv.2 以上全部标错
               if (option === question.answer) {
-                btnClass = 'bg-wc-success/20 border-wc-success text-wc-success'
+                btnClass = 'border-wc-success text-wc-success'
+                btnStyle = { background: 'rgba(34, 197, 94, 0.1)', boxShadow: '0 0 15px rgba(34, 197, 94, 0.2)' }
               } else if (option === selected) {
-                btnClass = 'bg-wc-danger/20 border-wc-danger text-wc-danger'
+                btnClass = 'border-wc-danger text-wc-danger'
+                btnStyle = { background: 'rgba(239, 68, 68, 0.1)' }
               } else {
-                btnClass = 'bg-wc-surface-2 border-wc-border opacity-50'
+                btnClass = 'bg-wc-surface-2/40 border-wc-border/30 opacity-40'
               }
             }
 
@@ -494,30 +611,40 @@ export default function WordTrainer({ sessionType, onFinish }: WordTrainerProps)
                 key={`${option}-${i}`}
                 onClick={() => submitAnswer(option)}
                 disabled={isRevealed}
-                className={`p-4 rounded-lg border text-sm font-medium transition-all ${btnClass} ${
-                  isRevealed ? 'cursor-default' : 'cursor-pointer active:scale-95'
+                className={`p-4 rounded-xl border text-sm font-medium transition-all btn-game ${btnClass} ${
+                  isRevealed ? 'cursor-default' : 'cursor-pointer'
                 }`}
+                style={btnStyle}
               >
-                {String.fromCharCode(65 + i)}. {option}
+                <span className="inline-block w-6 h-6 rounded-full bg-wc-bg/50 text-center text-xs leading-6 mr-2 font-game-mono text-wc-text-muted">
+                  {String.fromCharCode(65 + i)}
+                </span>
+                {option}
               </button>
             )
           })}
         </div>
       )}
 
+      {/* 下一题按钮 */}
       {isRevealed && (
-        <div className="text-center pop-in">
+        <div className="text-center pop-in-bounce">
           <button
             onClick={handleNext}
-            className="px-8 py-3 bg-gradient-to-r from-wc-primary to-wc-primary-bright rounded-lg font-bold hover:opacity-90 transition"
+            className="px-10 py-3 bg-gradient-to-r from-wc-primary to-wc-primary-bright rounded-xl font-bold hover:opacity-90 transition btn-game"
+            style={{ boxShadow: `0 0 20px rgba(124, 58, 237, 0.3)` }}
           >
             {cursor < queue.length - 1 ? '下一个水晶 →' : '完成冒险！'}
           </button>
         </div>
       )}
 
+      {/* XP 飘字 */}
       {xpFloat && (
-        <div className="float-text text-wc-gold text-xl" style={{ left: xpFloat.x, top: xpFloat.y }}>
+        <div
+          className="float-xp text-wc-gold text-2xl"
+          style={{ left: xpFloat.x, top: xpFloat.y }}
+        >
           +{xpFloat.xp} XP
         </div>
       )}

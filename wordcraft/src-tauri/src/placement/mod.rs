@@ -106,11 +106,10 @@ fn progress(conn: &Connection) -> Result<(i64, i64), String> {
     Ok((answered, BANDS.len() as i64 * QUESTIONS_PER_BAND))
 }
 
-/// 关闭一层，并在连续答错时跳过所有更难的层。
+/// 关闭一层。
 ///
-/// 更难的层必然更不会——继续测只是浪费用户时间。契约 §9.2② 的
-/// 「连续 3 题错则下跳」在此实现为提前收束整个摸底。
-fn close_band(conn: &Connection, band: i64, skip_harder: bool) -> Result<(), String> {
+/// 只关当前层——契约 §9.2② 的「下跳一层」是继续测下一层，不是终止摸底。
+fn close_band(conn: &Connection, band: i64) -> Result<(), String> {
     // 必须 INSERT..ON CONFLICT 而非 UPDATE：一题未答的层还没有行，
     // UPDATE 影响 0 行且不报错，关闭动作静默失效——而连错跳过恰恰
     // 总是作用在这种从未答过题的层上
@@ -125,14 +124,7 @@ fn close_band(conn: &Connection, band: i64, skip_harder: bool) -> Result<(), Str
         Ok(())
     };
 
-    close_one(band)?;
-
-    if skip_harder {
-        for b in BANDS.iter().copied().filter(|b| *b > band) {
-            close_one(b)?;
-        }
-    }
-    Ok(())
+    close_one(band)
 }
 
 // ─────────────────────────────────────────────
@@ -155,7 +147,7 @@ pub fn get_placement_question(db: State<Db>) -> Result<Option<PlacementQuestion>
         None => {
             // 该层的词已出完却还没关闭——词库中此层词数不足 12。
             // 关掉它继续下一层，而不是卡在这里返回空
-            close_band(&conn, band, false)?;
+            close_band(&conn, band)?;
             let next = active_band(&conn)?;
             match next {
                 Some(b) => pick_question(&conn, b),
@@ -225,12 +217,16 @@ pub fn submit_placement_answer(
         )
         .map_err(|e| format!("读取摸底统计失败: {e}"))?;
 
-    // 连错达上限：该层已超出能力，且更难的层必然更不会——一并跳过
+    // 连错达上限只结束**当前层**，继续测下一层（契约 §9.2②「下跳一层」）。
+    //
+    // 早期实现在此跳过所有更难的层，实测把一次摸底压缩到 6 题就收场：
+    // band 1 是最高频词，开头几题手生就断送整场测试，最终判定词汇量为 0、
+    // 3657 个词全按新词排队。样本太小，结论不可信。
     let aborted = misses >= CONSECUTIVE_MISS_LIMIT;
     let filled = asked >= QUESTIONS_PER_BAND;
 
     if aborted || filled {
-        close_band(&conn, band, aborted)?;
+        close_band(&conn, band)?;
     }
 
     Ok(AnswerOutcome {
@@ -489,24 +485,28 @@ mod tests {
     }
 
     #[test]
-    fn 连续答错会跳过所有更难的层() {
+    fn 连续答错只结束当前层不终止摸底() {
         let conn = seed(20);
-        // 真实路径是从 band 1 顺序往下测，到 band 2 才连错
-        close_band(&conn, 1, false).unwrap();
-        close_band(&conn, 2, true).unwrap();
+        close_band(&conn, 1).unwrap();
+        close_band(&conn, 2).unwrap();
 
-        // band 3/4/5 应被一并关闭——更难的层必然更不会，继续测是浪费时间
+        // 更难的层必须继续测。早期实现在此跳过全部，导致一次摸底
+        // 只答 6 题就收场，样本小到结论不可信
+        assert_eq!(
+            active_band(&conn).unwrap(),
+            Some(3),
+            "关闭 band 2 后应继续测 band 3，而非终止摸底"
+        );
         for band in 3..=5 {
-            let closed: i64 = conn
+            let closed: Option<i64> = conn
                 .query_row(
                     "SELECT is_closed FROM placement_results WHERE band = ?1",
                     [band],
                     |r| r.get(0),
                 )
-                .unwrap();
-            assert_eq!(closed, 1, "band {band} 未被跳过");
+                .ok();
+            assert_ne!(closed, Some(1), "band {band} 不该被提前关闭");
         }
-        assert!(active_band(&conn).unwrap().is_none(), "应无待测层");
     }
 
     #[test]
@@ -541,7 +541,7 @@ mod tests {
     #[test]
     fn 关闭单层不影响其他层() {
         let conn = seed(20);
-        close_band(&conn, 1, false).unwrap();
+        close_band(&conn, 1).unwrap();
         assert_eq!(active_band(&conn).unwrap(), Some(2));
     }
 
@@ -553,7 +553,7 @@ mod tests {
             answer(&conn, 1, i + 1, true);
         }
         for band in 2..=5 {
-            close_band(&conn, band, false).unwrap();
+            close_band(&conn, band).unwrap();
         }
 
         let outcome = finalize_with(&mut conn).unwrap();
@@ -580,7 +580,7 @@ mod tests {
             answer(&conn, 1, i + 1, false);
         }
         for band in 2..=5 {
-            close_band(&conn, band, false).unwrap();
+            close_band(&conn, band).unwrap();
         }
 
         let outcome = finalize_with(&mut conn).unwrap();
@@ -595,7 +595,7 @@ mod tests {
             answer(&conn, 1, i + 1, true);
         }
         for band in 2..=5 {
-            close_band(&conn, band, false).unwrap();
+            close_band(&conn, band).unwrap();
         }
         finalize_with(&mut conn).unwrap();
 
@@ -620,7 +620,7 @@ mod tests {
             answer(&conn, 1, i + 1, true);
         }
         for band in 2..=5 {
-            close_band(&conn, band, false).unwrap();
+            close_band(&conn, band).unwrap();
         }
         finalize_with(&mut conn).unwrap();
 
@@ -659,7 +659,7 @@ mod tests {
             answer(&conn, 1, i + 2, true);
         }
         for band in 2..=5 {
-            close_band(&conn, band, false).unwrap();
+            close_band(&conn, band).unwrap();
         }
         finalize_with(&mut conn).unwrap();
 

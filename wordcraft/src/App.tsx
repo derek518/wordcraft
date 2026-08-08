@@ -29,12 +29,6 @@ export default function App() {
     }
   }, [])
 
-  /**
-   * 首次启动：导入内置词库（3,657 词考纲词汇）。
-   *
-   * 词库走 fetch 而非 import：1MB 数据只在首启用一次，打进 JS bundle
-   * 会长期占内存。文件在 public/ 下，由 scripts/wordlist/build_library.py 生成。
-   */
   const bootstrap = useCallback(async () => {
     try {
       const done = await api.getSetting('onboarding_done')
@@ -49,8 +43,6 @@ export default function App() {
 
       const outcome = await api.importWords(payload)
       if (outcome.rejected.length > 0) {
-        // 被拒的词永远不会出现在任何练习里。只打 console 等于没报——
-        // 这批数据少了一个 overcome，是靠比对数量才发现的
         console.warn('部分词条未通过校验：', outcome.rejected)
         const preview = outcome.rejected
           .slice(0, 3)
@@ -76,12 +68,11 @@ export default function App() {
       await bootstrap()
       await loadStats()
 
-      // 摸底未完成则先做摸底：不做的话已经会的词会被当新词从头学一遍
       try {
         const stage = await api.getSetting('placement_stage')
         if (stage !== '2') setView('placement')
       } catch {
-        // 读不到设置时按已完成处理，不能因为这个把用户挡在门外
+        // 读不到设置时按已完成处理
       }
     })()
   }, [bootstrap, loadStats])
@@ -99,38 +90,49 @@ export default function App() {
   const progress = stats ? levelProgress(stats.total_xp) : null
 
   return (
-    <div className="min-h-screen bg-wc-bg text-wc-text">
-      <header className="flex items-center justify-between px-6 py-3 bg-wc-surface border-b border-wc-border">
+    <div className="min-h-screen bg-wc-bg text-wc-text relative">
+      {/* 星空粒子背景 */}
+      <div className="particle-bg" />
+      {/* 扫描线覆盖 */}
+      <div className="scanline-overlay" />
+
+      {/* Header */}
+      <header
+        className="flex items-center justify-between px-6 py-3 relative z-10"
+        style={{
+          background: 'linear-gradient(180deg, rgba(22, 22, 42, 0.95), rgba(16, 16, 32, 0.98))',
+          borderBottom: '1px solid rgba(42, 42, 74, 0.6)',
+          backdropFilter: 'blur(10px)',
+        }}
+      >
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded bg-gradient-to-br from-wc-primary to-wc-accent flex items-center justify-center text-sm font-bold">
-            WC
-          </div>
-          <h1 className="text-lg font-bold tracking-wide">WordCraft</h1>
+          <img src="/assets/ui/app_icon_32.png" alt="" className="w-8 h-8 object-contain" />
+          <h1 className="text-lg font-bold tracking-wide font-game">WordCraft</h1>
         </div>
 
         <div className="flex items-center gap-4 text-sm">
-        {stats && progress && (
-          <>
-            <div className="flex items-center gap-1.5">
-              <span className="text-wc-gold">⭐</span>
-              <span className="font-mono">Lv.{progress.level}</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-wc-accent">💎</span>
-              <span className="font-mono">{stats.total_xp} XP</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-wc-fire">🔥</span>
-              <span className="font-mono">{stats.current_streak} 天</span>
-            </div>
-          </>
-        )}
+          {stats && progress && (
+            <>
+              <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-wc-bg/50 border border-wc-border/40">
+                <img src="/assets/effects/star.png" alt="" className="w-4 h-4 object-contain" />
+                <span className="font-game-mono text-wc-gold">Lv.{progress.level}</span>
+              </div>
+              <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-wc-bg/50 border border-wc-border/40">
+                <img src="/assets/crystals/crystal_water_bright.png" alt="" className="w-4 h-4 object-contain" />
+                <span className="font-game-mono text-wc-accent">{stats.total_xp}</span>
+              </div>
+              <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-wc-bg/50 border border-wc-border/40">
+                <span className="text-wc-fire">🔥</span>
+                <span className="font-game-mono">{stats.current_streak}</span>
+              </div>
+            </>
+          )}
           <button
             onClick={() => setView('settings')}
-            className="text-wc-text-muted hover:text-wc-text transition text-lg"
+            className="text-wc-text-muted hover:text-wc-text transition p-1.5 rounded-lg hover:bg-wc-surface-2"
             title="设置"
           >
-            ⚙️
+            <img src="/assets/blocks/block_special.png" alt="" className="w-5 h-5 object-contain opacity-60 hover:opacity-100 transition" />
           </button>
         </div>
       </header>
@@ -144,7 +146,7 @@ export default function App() {
 
       {importing && (
         <div className="mx-4 mt-4 p-3 rounded-lg bg-wc-surface border border-wc-border text-sm flex items-center gap-2">
-          <span className="animate-pulse">⚡</span>
+          <img src="/assets/crystals/crystal_fire_bright.png" alt="" className="w-4 h-4 object-contain animate-pulse" />
           正在导入词库（3,657 词），首次启动需要几秒…
         </div>
       )}
@@ -162,7 +164,7 @@ export default function App() {
         </div>
       )}
 
-      <main className="p-4">
+      <main className="p-4 relative z-10">
         {view === 'map' && (
           <AdventureMap
             onStartTraining={startTraining}
@@ -178,37 +180,53 @@ export default function App() {
         {view === 'settings' && <SettingsPanel onBack={() => setView('map')} />}
       </main>
 
+      {/* Welcome Modal */}
       {showWelcome && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
-          <div className="bg-wc-surface border border-wc-border rounded-xl p-8 max-w-md w-full mx-4 pop-in">
-            <h2 className="text-2xl font-bold mb-4 text-center">🎮 欢迎来到遗忘之境</h2>
-            <p className="text-wc-text-muted mb-6 text-center leading-relaxed">
-              你是一位掉入遗忘之境的冒险者。
-              <br />
-              收集词汇水晶，击败遗忘魔王，
-              <br />
-              建造属于你的家园！
-            </p>
-            <div className="space-y-3 mb-6">
-              <div className="flex items-center gap-3 text-sm">
-                <span className="text-wc-success text-lg">✨</span>
-                <span>每天早中晚三个传送门自动开启</span>
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
+          <div
+            className="rounded-2xl p-8 max-w-md w-full mx-4 pop-in-bounce relative overflow-hidden"
+            style={{
+              background: 'linear-gradient(135deg, rgba(22, 22, 42, 0.98), rgba(14, 14, 30, 0.98))',
+              border: '1px solid rgba(124, 58, 237, 0.3)',
+              boxShadow: '0 0 40px rgba(124, 58, 237, 0.2), 0 20px 60px rgba(0, 0, 0, 0.5)',
+            }}
+          >
+            {/* 装饰光晕 */}
+            <div className="absolute -top-20 -right-20 w-40 h-40 rounded-full blur-3xl opacity-20 bg-wc-primary" />
+            <div className="absolute -bottom-20 -left-20 w-40 h-40 rounded-full blur-3xl opacity-20 bg-wc-accent" />
+
+            <div className="relative text-center">
+              <div className="w-20 h-20 mx-auto mb-4">
+                <img src="/assets/ui/app_icon_256.png" alt="" className="w-full h-full object-contain drop-shadow-[0_0_20px_rgba(168,85,247,0.5)]" />
               </div>
-              <div className="flex items-center gap-3 text-sm">
-                <span className="text-wc-accent text-lg">💎</span>
-                <span>答对越快，水晶越亮</span>
+              <h2 className="text-2xl font-bold mb-2 tracking-wide">欢迎来到遗忘之境</h2>
+              <p className="text-wc-text-muted mb-6 leading-relaxed text-sm">
+                你是一位掉入遗忘之境的冒险者。<br />
+                收集词汇水晶，击败遗忘魔王，<br />
+                建造属于你的家园！
+              </p>
+
+              <div className="space-y-3 mb-6">
+                {[
+                  { icon: '/assets/crystals/crystal_grass_bright.png', text: '每天早中晚三个传送门自动开启' },
+                  { icon: '/assets/crystals/crystal_fire_bright.png', text: '答对越快，水晶越亮' },
+                  { icon: '/assets/blocks/block_special.png', text: '收集的水晶可以用来建造家园' },
+                ].map((item, i) => (
+                  <div key={i} className="flex items-center gap-3 text-sm p-2 rounded-lg bg-wc-bg/50">
+                    <img src={item.icon} alt="" className="w-6 h-6 object-contain flex-shrink-0" />
+                    <span>{item.text}</span>
+                  </div>
+                ))}
               </div>
-              <div className="flex items-center gap-3 text-sm">
-                <span className="text-wc-gold text-lg">🏠</span>
-                <span>收集的水晶可以用来建造家园</span>
-              </div>
+
+              <button
+                onClick={() => setShowWelcome(false)}
+                className="w-full py-3 bg-gradient-to-r from-wc-primary to-wc-primary-bright rounded-xl font-bold hover:opacity-90 transition btn-game"
+                style={{ boxShadow: '0 0 20px rgba(124, 58, 237, 0.4)' }}
+              >
+                开始冒险！
+              </button>
             </div>
-            <button
-              onClick={() => setShowWelcome(false)}
-              className="w-full py-3 bg-gradient-to-r from-wc-primary to-wc-primary-bright rounded-lg font-bold hover:opacity-90 transition"
-            >
-              开始冒险！
-            </button>
           </div>
         </div>
       )}

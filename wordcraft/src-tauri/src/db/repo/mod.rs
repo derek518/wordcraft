@@ -13,6 +13,7 @@
 //! * 受控值在此校验并给出可诊断消息；数据库 CHECK 是最后防线，不是唯一防线。
 //! * 一切时间运算走 `db::clock`，模块内不出现手写日历逻辑（ADR-4）。
 
+pub mod homestead;
 pub mod player_stats;
 pub mod review_logs;
 pub mod sessions;

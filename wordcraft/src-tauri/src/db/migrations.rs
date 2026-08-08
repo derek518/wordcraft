@@ -42,6 +42,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "painting_pool",
         sql: include_str!("migrations/005_painting_pool.sql"),
     },
+    Migration {
+        version: 6,
+        name: "homestead",
+        sql: include_str!("migrations/006_homestead.sql"),
+    },
 ];
 
 /// 执行所有未应用的迁移，返回本次实际应用的版本号。
@@ -185,6 +190,11 @@ mod tests {
         // migration 003：摸底分级进度，支持分两次完成
         ("placement_results", &["band", "asked", "passed", "is_closed", "consecutive_miss"]),
         ("placement_asked", &["word_id", "asked_at"]),
+        // migration 006：家园建造
+        ("block_inventory", &["block_type", "owned", "placed"]),
+        ("homestead_grid", &["x", "y", "block_type", "placed_at"]),
+        ("block_grants",
+         &["id", "source", "source_key", "block_type", "amount", "granted_at"]),
     ];
 
     fn columns_of(conn: &Connection, table: &str) -> Vec<String> {
@@ -244,7 +254,7 @@ mod tests {
         let mut conn = in_memory_db();
 
         let first = run(&mut conn).expect("首次迁移失败");
-        assert_eq!(first, vec![1, 2, 3, 4, 5], "首次应用全部迁移");
+        assert_eq!(first, vec![1, 2, 3, 4, 5, 6], "首次应用全部迁移");
 
         let second = run(&mut conn).expect("重复迁移失败");
         assert!(second.is_empty(), "重复执行不应再应用任何迁移");

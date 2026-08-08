@@ -8,6 +8,7 @@ mod window;
 pub use window::{next_session, parse_windows, SessionTime};
 
 use crate::db::{clock, repo::sessions, repo::settings, Db};
+use chrono::Timelike;
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
@@ -74,6 +75,9 @@ pub fn start_scheduler(app: AppHandle) {
         // 每次跨到新的一天时清空
         let mut fired: Vec<String> = Vec::new();
         let mut fired_date = clock::today();
+        // 周报每小时查一次就够。跟着 30 秒的轮询走会白读几千次配置文件，
+        // 而它要等的是「周日 20 点」这种以小时为刻度的条件
+        let mut report_hour: Option<u32> = None;
 
         loop {
             tauri::async_runtime::spawn_blocking(|| std::thread::sleep(TICK))
@@ -84,6 +88,12 @@ pub fn start_scheduler(app: AppHandle) {
             if today != fired_date {
                 fired.clear();
                 fired_date = today;
+            }
+
+            let hour = chrono::Local::now().hour();
+            if report_hour != Some(hour) {
+                report_hour = Some(hour);
+                check_weekly_report(&app);
             }
 
             let next = match compute(&app) {
@@ -132,6 +142,18 @@ pub fn start_scheduler(app: AppHandle) {
             fired.push(next.session_type);
         }
     });
+}
+
+/// 周报检查。取不到数据目录时只记日志——周报失效不该影响弹窗调度。
+fn check_weekly_report(app: &AppHandle) {
+    let dir = match app.path().app_data_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("周报无法定位数据目录: {e}");
+            return;
+        }
+    };
+    crate::report::tick(&app.state::<Db>(), &dir);
 }
 
 fn mark_eligible(app: &AppHandle, session_type: &str) -> Result<(), String> {

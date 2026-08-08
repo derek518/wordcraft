@@ -13,6 +13,7 @@ mod placement;
 mod platform;
 mod progression;
 mod queue;
+mod report;
 mod review;
 mod scheduler;
 mod season;
@@ -45,6 +46,11 @@ fn main() {
             }
             if let Err(e) = season::settle_on_startup(&database) {
                 log::warn!("赛季结算失败: {e}");
+            }
+            // 周报配置自检。放在 manage 之前——database 随后就被移走了
+            match app_handle.path().app_data_dir() {
+                Ok(dir) => report::startup_check(&database, &dir),
+                Err(e) => log::warn!("周报无法定位数据目录: {e}"),
             }
             app.manage(database);
 

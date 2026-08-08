@@ -37,3 +37,6 @@ __pycache__/
 # 都产生全新 blob。音频是构建产物，由 scripts/tts/pregenerate.py 产出，
 # 打包前执行即可
 wordcraft/src-tauri/audio/
+
+# 周报 SMTP 凭据，绝不入库（docs/weekly-report.md）
+report.json

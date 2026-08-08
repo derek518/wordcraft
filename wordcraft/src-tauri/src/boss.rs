@@ -280,3 +280,72 @@ mod tests {
         assert_eq!(rare_owned(&conn), 0);
     }
 }
+
+#[cfg(test)]
+mod integration_tests {
+    //! 对着真实词库跑一遍完整讨伐，验证 command 层的连接而非仅逻辑。
+    use super::*;
+    use crate::db::migrations;
+
+    #[test]
+    fn 完整讨伐流程改变四处状态() {
+        let mut conn = crate::test_support::in_memory_db();
+        migrations::run(&mut conn).unwrap();
+        crate::db::repo::words::import(
+            &mut conn,
+            &[crate::db::repo::words::WordImport {
+                word: "stubborn".into(),
+                phonetic: "/ˈstʌbərn/".into(),
+                pos: "adj.".into(),
+                meaning: "顽固的".into(),
+                example_1: "A stubborn word refuses to stay.".into(),
+                example_2: String::new(),
+                level: "senior".into(),
+                frequency_band: 2,
+                zone: "grass".into(),
+                source_edition: String::new(),
+            }],
+        )
+        .unwrap();
+
+        crate::db::repo::word_states::upsert(
+            &conn,
+            &crate::db::repo::word_states::WordState {
+                word_id: 1,
+                difficulty: 8.0,
+                stability: 0.5,
+                due_at: clock::now(),
+                fsrs_state: 3,
+                app_state: "reinforcing".into(),
+                reps: 8,
+                lapses: 4,
+                question_level: 2,
+                reinforce_streak: 0,
+                last_review_at: None,
+                mastered_at: None,
+            },
+        )
+        .unwrap();
+
+        let out = defeat(&mut conn, 1).unwrap();
+
+        // 1. 掉落发生
+        assert!(out.dropped_block);
+        // 2. 库存增加
+        assert_eq!(
+            blocks::inventory(&conn).unwrap().iter()
+                .find(|s| s.block_type == "rare").unwrap().owned,
+            1
+        );
+        // 3. 题型提升两级并落库
+        let level: i64 = conn
+            .query_row("SELECT question_level FROM word_states WHERE word_id=1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(level, 4);
+        // 4. 账本留痕，来源可追溯
+        let src: String = conn
+            .query_row("SELECT source FROM block_grants WHERE source_key='1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(src, "boss");
+    }
+}

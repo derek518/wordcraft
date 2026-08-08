@@ -229,6 +229,32 @@ export interface Blueprint {
 /** 静态内容，随版本发布；不落库因为没有用户态可存 */
 export const getBlueprints = () => call<Blueprint[]>('get_blueprints')
 
+// ── 魔王讨伐 ──────────────────────────
+
+export interface BossWord {
+  word_id: number
+  word: string
+  phonetic: string
+  pos: string
+  meaning: string
+  example_1: string
+  /** 遗忘次数，即这个魔王「击败过你」多少次 */
+  lapses: number
+  hp: number
+  already_defeated: boolean
+}
+
+export interface DefeatOutcome {
+  word: string
+  /** 重复讨伐同一个魔王不再掉落 */
+  dropped_block: boolean
+  new_question_level: number
+}
+
+export const getBossWords = (limit: number) => call<BossWord[]>('get_boss_words', { limit })
+export const defeatBoss = (wordId: number) =>
+  call<DefeatOutcome>('defeat_boss', { wordId })
+
 // ── 赛季赛道 ──────────────────────────
 
 export interface SeasonState {

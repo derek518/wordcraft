@@ -7,12 +7,13 @@ import CardAlbum from './components/CardAlbum'
 import SettingsPanel from './components/SettingsPanel'
 import Homestead from './components/Homestead'
 import SeasonTrack from './components/SeasonTrack'
+import BossBattle from './components/BossBattle'
 import * as api from './data/api'
 import { levelProgress } from './core/progression'
 import type { OverallStats, SessionType } from './core/types'
 import './index.css'
 
-type View = 'map' | 'train' | 'stats' | 'placement' | 'album' | 'settings' | 'homestead' | 'season'
+type View = 'map' | 'train' | 'stats' | 'placement' | 'album' | 'settings' | 'homestead' | 'season' | 'boss'
 
 export default function App() {
   const [view, setView] = useState<View>('map')
@@ -174,6 +175,7 @@ export default function App() {
             onOpenAlbum={() => setView('album')}
             onOpenHomestead={() => setView('homestead')}
             onOpenSeason={() => setView('season')}
+            onOpenBoss={() => setView('boss')}
             stats={stats}
           />
         )}
@@ -184,6 +186,7 @@ export default function App() {
         {view === 'settings' && <SettingsPanel onBack={() => setView('map')} />}
         {view === 'homestead' && <Homestead onBack={() => setView('map')} />}
         {view === 'season' && <SeasonTrack onBack={() => setView('map')} />}
+        {view === 'boss' && <BossBattle onBack={() => setView('map')} />}
       </main>
 
       {/* Welcome Modal */}

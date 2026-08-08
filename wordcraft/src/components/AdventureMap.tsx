@@ -9,6 +9,7 @@ interface AdventureMapProps {
   onOpenHomestead: () => void
   onOpenSeason: () => void
   onOpenBoss: () => void
+  onOpenLibrary: () => void
   stats: OverallStats | null
 }
 
@@ -57,7 +58,7 @@ const ELEMENT_COLORS: Record<string, { bg: string; glow: string; text: string }>
   ice: { bg: '#22d3ee', glow: 'rgba(103, 232, 249, 0.4)', text: '#67e8f9' },
 }
 
-export default function AdventureMap({ onStartTraining, onOpenStats, onOpenAlbum, onOpenHomestead, onOpenSeason, onOpenBoss, stats }: AdventureMapProps) {
+export default function AdventureMap({ onStartTraining, onOpenStats, onOpenAlbum, onOpenHomestead, onOpenSeason, onOpenBoss, onOpenLibrary, stats }: AdventureMapProps) {
   const [sessions, setSessions] = useState<Session[]>([])
   const [zones, setZones] = useState<api.ZoneProgress[]>([])
   const [hoveredPortal, setHoveredPortal] = useState<string | null>(null)
@@ -325,6 +326,14 @@ export default function AdventureMap({ onStartTraining, onOpenStats, onOpenAlbum
         >
           <img src="/assets/blocks/block_normal.png" alt="" className="w-4 h-4 object-contain" />
           我的家园
+        </button>
+        <button
+          onClick={onOpenLibrary}
+          className="btn-game hud-panel rounded-lg py-2.5 text-sm font-bold transition-all hover:border-wc-primary/50 flex items-center justify-center gap-1.5"
+          style={{ borderColor: 'rgba(60, 60, 100, 0.8)' }}
+        >
+          <span className="text-base leading-none">🔍</span>
+          水晶图谱
         </button>
         <button
           onClick={onOpenBoss}

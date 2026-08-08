@@ -171,6 +171,30 @@ export const markCardsSeen = (cardIds: number[]) =>
 
 export const getOverallStats = () => call<OverallStats>('get_overall_stats')
 export const getTodayStats = () => call<DayStats>('get_today_stats')
+export interface HeatmapCell {
+  date: string
+  count: number
+}
+
+/** 日历热力图。后端补齐缺失日期为 0，前端按固定网格渲染不会错位 */
+export const getHeatmap = (days: number) => call<HeatmapCell[]>('get_heatmap', { days })
+
+export const searchWords = (keyword: string, limit: number) =>
+  call<LibraryWord[]>('search_words', { keyword, limit })
+
+export interface LibraryWord {
+  id: number
+  word: string
+  phonetic: string
+  pos: string
+  meaning: string
+  example_1: string
+  example_2: string
+  level: string
+  frequency_band: number
+  zone: string
+}
+
 export const getMasteryDistribution = () =>
   call<MasteryDistribution>('get_mastery_distribution')
 

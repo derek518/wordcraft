@@ -8,12 +8,13 @@ import SettingsPanel from './components/SettingsPanel'
 import Homestead from './components/Homestead'
 import SeasonTrack from './components/SeasonTrack'
 import BossBattle from './components/BossBattle'
+import WordLibrary from './components/WordLibrary'
 import * as api from './data/api'
 import { levelProgress } from './core/progression'
 import type { OverallStats, SessionType } from './core/types'
 import './index.css'
 
-type View = 'map' | 'train' | 'stats' | 'placement' | 'album' | 'settings' | 'homestead' | 'season' | 'boss'
+type View = 'map' | 'train' | 'stats' | 'placement' | 'album' | 'settings' | 'homestead' | 'season' | 'boss' | 'library'
 
 export default function App() {
   const [view, setView] = useState<View>('map')
@@ -176,6 +177,7 @@ export default function App() {
             onOpenHomestead={() => setView('homestead')}
             onOpenSeason={() => setView('season')}
             onOpenBoss={() => setView('boss')}
+            onOpenLibrary={() => setView('library')}
             stats={stats}
           />
         )}
@@ -187,6 +189,7 @@ export default function App() {
         {view === 'homestead' && <Homestead onBack={() => setView('map')} />}
         {view === 'season' && <SeasonTrack onBack={() => setView('map')} />}
         {view === 'boss' && <BossBattle onBack={() => setView('map')} />}
+        {view === 'library' && <WordLibrary onBack={() => setView('map')} />}
       </main>
 
       {/* Welcome Modal */}

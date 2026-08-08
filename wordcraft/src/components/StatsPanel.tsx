@@ -39,19 +39,23 @@ export default function StatsPanel({ onBack }: StatsPanelProps) {
   const [today, setToday] = useState<DayStats | null>(null)
   const [overall, setOverall] = useState<OverallStats | null>(null)
   const [mastery, setMastery] = useState<MasteryDistribution | null>(null)
+  const [heatmap, setHeatmap] = useState<api.HeatmapCell[]>([])
   const [error, setError] = useState('')
 
   const load = useCallback(async () => {
     setError('')
     try {
-      const [t, o, m] = await Promise.all([
+      const [t, o, m, h] = await Promise.all([
         api.getTodayStats(),
         api.getOverallStats(),
         api.getMasteryDistribution(),
+        // 12 周：足以看出习惯，又不会把格子挤到看不清
+        api.getHeatmap(84),
       ])
       setToday(t)
       setOverall(o)
       setMastery(m)
+      setHeatmap(h)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
@@ -199,6 +203,47 @@ export default function StatsPanel({ onBack }: StatsPanelProps) {
       )}
 
       {/* ===== 水晶分布 ===== */}
+      {heatmap.length > 0 && (
+        <div className="hud-panel rounded-2xl p-5 mb-6">
+          <h3 className="text-xs font-bold text-wc-text-muted uppercase tracking-[0.15em] mb-4 flex items-center gap-2">
+            <img src="/assets/effects/sparkle.png" alt="" className="w-4 h-4 object-contain" />
+            近 12 周
+          </h3>
+          {/* 按周分列。grid-flow-col 让日期竖着排、周横着走，
+              与常见的贡献热力图一致 */}
+          <div className="grid grid-rows-7 grid-flow-col gap-[3px] justify-center">
+            {heatmap.map((cell) => {
+              // 分档而非线性映射：一天答 5 题和 50 题的差别，
+              // 线性会让绝大多数格子挤在最暗的一档
+              const level =
+                cell.count === 0 ? 0 : cell.count < 5 ? 1 : cell.count < 15 ? 2 : cell.count < 30 ? 3 : 4
+              const colors = [
+                'rgba(60,60,100,0.25)',
+                'rgba(124,58,237,0.35)',
+                'rgba(124,58,237,0.6)',
+                'rgba(168,85,247,0.85)',
+                'rgba(6,182,212,1)',
+              ]
+              return (
+                <div
+                  key={cell.date}
+                  title={`${cell.date}　${cell.count} 题`}
+                  className="w-[9px] h-[9px] rounded-[2px] transition-transform hover:scale-150"
+                  style={{ backgroundColor: colors[level] }}
+                />
+              )
+            })}
+          </div>
+          <div className="flex items-center justify-end gap-1 mt-3 text-[10px] text-wc-text-muted">
+            <span>少</span>
+            {['rgba(60,60,100,0.25)','rgba(124,58,237,0.35)','rgba(124,58,237,0.6)','rgba(168,85,247,0.85)','rgba(6,182,212,1)'].map((c) => (
+              <span key={c} className="w-[9px] h-[9px] rounded-[2px]" style={{ backgroundColor: c }} />
+            ))}
+            <span>多</span>
+          </div>
+        </div>
+      )}
+
       {mastery && (
         <div className="hud-panel rounded-2xl p-5 mb-6">
           <h3 className="text-xs font-bold text-wc-text-muted uppercase tracking-[0.15em] mb-4 flex items-center gap-2">

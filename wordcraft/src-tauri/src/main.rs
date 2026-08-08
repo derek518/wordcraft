@@ -14,6 +14,7 @@ mod progression;
 mod queue;
 mod review;
 mod scheduler;
+mod season;
 mod tray;
 mod tts;
 
@@ -40,6 +41,9 @@ fn main() {
             // best_streak 推过 7 的倍数，那一块要在同一次启动里发出
             if let Err(e) = homestead::grant_on_startup(&database) {
                 log::warn!("家园方块补发失败: {e}");
+            }
+            if let Err(e) = season::settle_on_startup(&database) {
+                log::warn!("赛季结算失败: {e}");
             }
             app.manage(database);
 
@@ -80,6 +84,9 @@ fn main() {
             homestead::remove_block,
             homestead::grant_pending_blocks,
             homestead::get_blueprints,
+            // 赛季赛道
+            season::get_season,
+            season::redeem_points,
             // 统计
             commands::stats::get_today_stats,
             commands::stats::get_overall_stats,

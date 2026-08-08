@@ -19,6 +19,8 @@ pub struct PlayerStats {
     pub makeup_cards: i64,
     pub pause_used_month: i64,
     pub draw_tickets: i64,
+    /// 赛道积分（migration 007）。spec F11：断签不清，只清 streak
+    pub track_points: i64,
     pub last_grant_month: Option<String>,
 }
 
@@ -40,6 +42,7 @@ pub fn get(conn: &Connection) -> Result<PlayerStats, String> {
             makeup_cards: r.get("makeup_cards")?,
             pause_used_month: r.get("pause_used_month")?,
             draw_tickets: r.get("draw_tickets")?,
+            track_points: r.get("track_points")?,
             last_grant_month: r.get("last_grant_month")?,
         })
     })

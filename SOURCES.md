@@ -4,7 +4,49 @@
 > 素材约束见 contracts §10.3：仅公有领域（Wikimedia Commons PD 标记）或原创生成，
 > **禁止任何商业游戏的角色名、立绘、贴图**。
 
+## 卡池 v2 · AI 辅助生成像素卡（42 张）
+
+> migration 010 起启用。取代下方卡池 A / B——那两批的素材文件仍在仓库中，
+> 但已无任何运行时引用。
+
+| 项 | 内容 |
+|---|---|
+| 位置 | `wordcraft/public/assets/cards/{common,rare,legend}/` |
+| 构成 | 普通 24（碎片 6 · 生物 12 · 器物 6）· 稀有 12（守护者 6 · 神器 6）· 传说 6 |
+| 许可证 | **CC0** — 原创构思，无第三方素材、无临摹对象 |
+| 提示词 | `docs/card-art-prompts.md`（唯一真相来源） |
+| 平铺提示词 | `scripts/cards/card_prompts.tsv`，由 `scripts/cards/build_prompts.py` 从文档派生 |
+| 压制脚本 | `scripts/cards/conform.py` |
+
+### 生成方式必须写清楚
+
+这批素材由**图像生成模型产出、经脚本压制**，`cards.source` 列统一记
+`原创生成 · AI 辅助 · CC0`。
+
+原图左下角带生成方烙的「AI生成」灰度水印，压制时清除——**那是画面上的一行字，
+不是出处**。抹掉字不等于抹掉出处，故在此明确记录：42 张卡面均为 AI 辅助生成。
+
+### 为什么仍算 CC0 且不违反素材约束
+
+- 提示词中不出现任何游戏、动画、IP 的名称，一个都没有
+- 负面提示词固定带 `existing franchise character, recognisable game mascot`
+- 逐张目视核对过，无可辨认的既有角色形象
+- 构思（42 个主体、剪影分配、稀有度分档）为本项目原创，见提示词文档 §6–§9
+
+### 复现
+
+```bash
+python3 scripts/cards/build_prompts.py > scripts/cards/card_prompts.tsv
+# 按 TSV 生成 1024×1024 原图到暂存目录
+python3 scripts/cards/conform.py <暂存目录> -o wordcraft/public/assets/cards/<tier>
+```
+
+与程序化生成的卡池 B 不同，这批**不能逐像素复现**——图像模型有随机性。
+提示词与压制参数可复现，具体画面不可。这是采用 AI 生成的固有代价，记录在此。
+
 ## 卡池 B · 原创像素生物（16 张）
+
+> 已由卡池 v2 取代（migration 010），素材保留但无运行时引用。
 
 | 项 | 内容 |
 |---|---|
@@ -20,6 +62,8 @@
 相同的卡。脚本内置断言拦截，此前「石背龟」与「沙丘鼠」正是这样撞在一起的。
 
 ## 卡池 A · 公有领域名画（8 张）
+
+> 已由卡池 v2 取代（migration 010），素材保留但无运行时引用。
 
 | 项 | 内容 |
 |---|---|

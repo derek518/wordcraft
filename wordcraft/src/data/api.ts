@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { MOCK_ENABLED, mockInvoke } from './devMock'
 import type {
   DayStats,
   MasteryDistribution,
@@ -20,6 +21,13 @@ import type {
  */
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  // 前置替换，不是失败兜底。两者的区别正是审计 D6 的要害：
+  // 兜底会把真实故障伪装成正常界面，替换则由启动时的环境变量显式选定，
+  // 且在 mock 模式下后端根本不参与
+  if (MOCK_ENABLED) {
+    return mockInvoke<T>(command, args)
+  }
+
   try {
     return await invoke<T>(command, args)
   } catch (error) {
@@ -328,6 +336,9 @@ export interface SeasonState {
   ghost_sessions: number
   projected_points: number
   track_points: number
+  /** 计分参数，来自后端 scoring.rs——前端不写死，否则改价时必然漂移 */
+  points_per_session: number
+  perfect_bonus: number
 }
 
 export interface RedeemOutcome {

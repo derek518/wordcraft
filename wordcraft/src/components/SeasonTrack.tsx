@@ -13,10 +13,10 @@ const REDEEM_ITEMS = [
 
 /** 里程碑配置 */
 const MILESTONES = [
-  { at: 3, label: '初出茅庐', icon: '🥉', color: '#cd7f32', desc: '完成3个时段' },
-  { at: 7, label: '渐入佳境', icon: '🥈', color: '#a0a0a0', desc: '完成7个时段' },
-  { at: 14, label: '持之以恒', icon: '🥇', color: '#ffd700', desc: '完成14个时段' },
-  { at: 21, label: '完美一周', icon: '👑', color: '#ff6b6b', desc: '完成全部时段' },
+  { at: 3, label: '初出茅庐', icon: '/assets/ui/medal_bronze.png', color: '#cd7f32', desc: '完成3个时段' },
+  { at: 7, label: '渐入佳境', icon: '/assets/ui/medal_silver.png', color: '#a0a0a0', desc: '完成7个时段' },
+  { at: 14, label: '持之以恒', icon: '/assets/ui/medal_gold.png', color: '#ffd700', desc: '完成14个时段' },
+  { at: 21, label: '完美一周', icon: '/assets/ui/crown.png', color: '#ff6b6b', desc: '完成全部时段' },
 ]
 
 function formatDateRange(startStr: string): string {
@@ -179,9 +179,12 @@ export default function SeasonTrack({ onBack }: SeasonTrackProps) {
                     style={{ left: `min(calc(${pos}% - 8px), calc(100% - 22px))` }}
                     title={m.desc}
                   >
-                    <span className={`text-sm ${reached ? 'grayscale-0' : 'grayscale opacity-30'}`}>
-                      {m.icon}
-                    </span>
+                    <img
+                      src={m.icon}
+                      alt={m.label}
+                      className={`w-5 h-5 object-contain ${reached ? 'grayscale-0' : 'grayscale opacity-30'}`}
+                      style={{ imageRendering: 'pixelated' }}
+                    />
                   </button>
                 )
               })}
@@ -190,7 +193,12 @@ export default function SeasonTrack({ onBack }: SeasonTrackProps) {
                 className="absolute top-1/2 -translate-y-1/2 text-lg transition-all duration-700 z-10"
                 style={{ left: `min(calc(${pct}% - 10px), calc(100% - 26px))` }}
               >
-                <span className="drop-shadow-[0_0_8px_rgba(6,182,212,0.6)]">🏎️</span>
+                <img
+                  src="/assets/ui/racer.png"
+                  alt=""
+                  className="w-6 h-6 object-contain drop-shadow-[0_0_8px_rgba(6,182,212,0.6)]"
+                  style={{ imageRendering: 'pixelated' }}
+                />
               </div>
             </div>
           </div>
@@ -204,10 +212,15 @@ export default function SeasonTrack({ onBack }: SeasonTrackProps) {
                 style={{ width: `calc(${season.ghost_progress * 100}% - 8px)` }}
               />
               <div
-                className="absolute top-1/2 -translate-y-1/2 text-sm transition-all duration-700 grayscale"
+                className="absolute top-1/2 -translate-y-1/2 transition-all duration-700 grayscale"
                 style={{ left: `min(calc(${ghostPct}% - 8px), calc(100% - 22px))` }}
               >
-                🏎️
+                <img
+                  src="/assets/ui/racer.png"
+                  alt=""
+                  className="w-5 h-5 object-contain"
+                  style={{ imageRendering: 'pixelated' }}
+                />
               </div>
             </div>
           </div>
@@ -247,7 +260,16 @@ export default function SeasonTrack({ onBack }: SeasonTrackProps) {
                     : 'border-wc-border/20 bg-wc-bg/40 opacity-50'
               }`}
             >
-              <div className="text-xl mb-0.5">{m.icon}</div>
+              <div className="mb-0.5">
+                {/* 48px：32 格资产 1.5 倍下采样，绶带与星形还撑得住。
+                    28px 时它们已经糊成一团 */}
+                <img
+                  src={m.icon}
+                  alt={m.label}
+                  className="w-12 h-12 mx-auto object-contain"
+                  style={{ imageRendering: 'pixelated' }}
+                />
+              </div>
               <div className="text-[10px] font-bold truncate">{m.label}</div>
               {/* 标出到这里实际能拿多少分。只写「3时段」是个没有回报的刻度，
                   而积分本来就是按时段真金白银发的，说出来即可 */}
@@ -319,7 +341,14 @@ export default function SeasonTrack({ onBack }: SeasonTrackProps) {
               if (!m) return null
               return (
                 <>
-                  <div className="text-6xl mb-3" style={{ filter: `drop-shadow(0 0 20px ${m.color})` }}>{m.icon}</div>
+                  <div className="mb-3" style={{ filter: `drop-shadow(0 0 20px ${m.color})` }}>
+                    <img
+                      src={m.icon}
+                      alt={m.label}
+                      className="w-20 h-20 mx-auto object-contain"
+                      style={{ imageRendering: 'pixelated' }}
+                    />
+                  </div>
                   <h2 className="text-2xl font-bold mb-1" style={{ color: m.color }}>{m.label}</h2>
                   <p className="text-sm text-wc-text-dim mb-4">{m.desc}</p>
                   <div className="hud-panel rounded-xl p-3 mb-4 text-sm">

@@ -605,14 +605,23 @@ glyphs carved across the shell plates recording history
 跟应用的像素调性不搭，而且 emoji 在 Windows 与 macOS 上长得不一样——同一份
 界面在目标平台上会是另一副样子。
 
-规格与卡面一致（§1–§4 通用风格块 + 负面提示词照用），只有两点不同：
+规格与卡面一致（§1–§4 通用风格块 + 负面提示词照用），只有落盘位置与网格不同：
 
-| 项 | 值 |
-|---|---|
-| 尺寸 | **64 × 64** RGBA（逻辑网格 16×16，4× 放大） |
-| 落盘 | `wordcraft/public/assets/ui/` |
+| 用途 | 逻辑网格 | 输出 | 显示尺寸 |
+|---|---|---|---|
+| 魔王四档 | 48 | 192 × 192 | 96px（正好 2:1） |
+| 赛车 · 四枚奖牌 | 32 | 128 × 128 | 20–28px |
 
-压制时给 `conform.py` 传 `-o`，并把文件名前缀改成对应元素即可复用同一套色阶。
+落盘 `wordcraft/public/assets/ui/`，压制：
+
+```bash
+python3 scripts/cards/conform.py <暂存目录> -g 48 -o wordcraft/public/assets/ui   # 魔王
+python3 scripts/cards/conform.py <暂存目录> -g 32 -o wordcraft/public/assets/ui   # 其余
+```
+
+> **网格按题材复杂度选，不是按显示尺寸选。** 第一版这九张定了 16 格，
+> 结果九张全毁——带鹿角的龙、带扰流板的赛车、带绶带的奖牌，16 个逻辑像素
+> 根本放不下。原图是好的，毁在压制，与卡面 v1 完全同一类错误。
 
 ### 魔王四档
 

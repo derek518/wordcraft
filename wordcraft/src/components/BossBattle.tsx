@@ -8,7 +8,7 @@ interface BossBattleProps {
 
 /* ── 魔王主题 ── */
 interface BossTheme {
-  emoji: string
+  icon: string
   name: string
   color: string
   glow: string
@@ -17,10 +17,10 @@ interface BossTheme {
 function getBossTheme(lapses: number, pos: string): BossTheme {
   const tier = Math.min(Math.floor((lapses - 1) / 2), 3)
   const themes: BossTheme[] = [
-    { emoji: '👹', name: '遗忘小鬼', color: '#ef4444', glow: 'rgba(239,68,68,0.4)' },
-    { emoji: '👺', name: '记忆天狗', color: '#f97316', glow: 'rgba(249,115,22,0.4)' },
-    { emoji: '🐉', name: '遗忘巨龙', color: '#a855f7', glow: 'rgba(168,85,247,0.4)' },
-    { emoji: '👿', name: '深渊魔王', color: '#dc2626', glow: 'rgba(220,38,38,0.5)' },
+    { icon: '/assets/ui/boss_tier1.png', name: '遗忘小鬼', color: '#ef4444', glow: 'rgba(239,68,68,0.4)' },
+    { icon: '/assets/ui/boss_tier2.png', name: '记忆天狗', color: '#f97316', glow: 'rgba(249,115,22,0.4)' },
+    { icon: '/assets/ui/boss_tier3.png', name: '遗忘巨龙', color: '#a855f7', glow: 'rgba(168,85,247,0.4)' },
+    { icon: '/assets/ui/boss_tier4.png', name: '深渊魔王', color: '#dc2626', glow: 'rgba(220,38,38,0.5)' },
   ]
   const base = themes[Math.min(tier, themes.length - 1)]
   const posNames: Record<string, string> = {
@@ -461,15 +461,19 @@ export default function BossBattle({ onBack }: BossBattleProps) {
           />
 
           <div
-            className={`relative z-10 text-7xl mb-3 inline-block ${
+            className={`relative z-10 mb-3 inline-block ${
               bossAnim === 'idle' ? 'boss-float' : bossAnim === 'hit' ? 'boss-hit' : 'boss-attack'
             }`}
             style={{
               filter: `drop-shadow(0 0 20px ${theme.glow})`,
-              textShadow: `0 0 40px ${theme.color}`,
             }}
           >
-            {theme.emoji}
+            <img
+              src={theme.icon}
+              alt={theme.name}
+              className="w-24 h-24 object-contain"
+              style={{ imageRendering: 'pixelated' }}
+            />
           </div>
 
           <div

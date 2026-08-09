@@ -33,12 +33,15 @@ try:
 except ImportError:
     sys.exit("需要 Pillow：pip install Pillow")
 
-# 逻辑像素网格与输出边长。256 = 64 × 4，整数倍——
+# 逻辑像素网格与放大倍数。输出 = GRID × SCALE，必须是整数倍——
 # 非整数倍（如 200/64=3.125）放大后会出现 3px 与 4px 混杂的像素，
 # 在像素画里一眼可见
-GRID = 64
+#
+# **网格要按题材复杂度选，不是按最终显示尺寸选。** 一条带鹿角的龙需要
+# 至少 48 格才画得下；16 格只够放一颗心或一枚箭头。界面精灵图第一版
+# 定 16 格，九张全毁——错的是网格，不是生成
+DEFAULT_GRID = 64
 SCALE = 4
-OUT_SIZE = GRID * SCALE
 
 # 自适应色板上限。16–32 是像素画的常规区间：
 # 再少会丢明度层次，再多则出现难以察觉的近似色、失去像素画的干净感
@@ -75,14 +78,14 @@ def strip_watermark(img):
     return removed
 
 
-def to_grid(img):
+def to_grid(img, grid):
     """降到逻辑网格。
 
     最近邻而非 BOX：像素画的相邻像素常常是刻意的明暗对照（甲片与高光），
     平均采样会把两者调和成中间调，正好毁掉塑造形体的那部分信息。
     """
-    rgb = img.convert("RGB").resize((GRID, GRID), Image.NEAREST)
-    alpha = img.getchannel("A").resize((GRID, GRID), Image.NEAREST)
+    rgb = img.convert("RGB").resize((grid, grid), Image.NEAREST)
+    alpha = img.getchannel("A").resize((grid, grid), Image.NEAREST)
     # 像素画没有半透明边缘，二值化掉抗锯齿残留
     alpha = alpha.point(lambda v: 255 if v >= ALPHA_CUTOFF else 0)
     out = rgb.convert("RGBA")
@@ -100,12 +103,13 @@ def quantize(img):
     return out
 
 
-def conform(path, out_dir):
+def conform(path, out_dir, grid):
+    out_size = grid * SCALE
     img = Image.open(path).convert("RGBA")
     wm = strip_watermark(img)
-    img = to_grid(img)
+    img = to_grid(img, grid)
     img = quantize(img)
-    img = img.resize((OUT_SIZE, OUT_SIZE), Image.NEAREST)
+    img = img.resize((out_size, out_size), Image.NEAREST)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     dest = out_dir / path.name
@@ -114,14 +118,21 @@ def conform(path, out_dir):
     alpha = img.getchannel("A")
     opaque = sum(alpha.point(lambda v: 1 if v else 0).getdata())
     colors = len({p for p in img.convert("RGBA").getdata() if p[3] > 0})
-    return dest, opaque / OUT_SIZE**2, colors, wm
+    return dest, opaque / out_size**2, colors, wm
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("input", type=Path, help="生成图所在目录")
     ap.add_argument("-o", "--output", type=Path, help="输出目录，默认 <输入>/conformed")
+    ap.add_argument(
+        "-g", "--grid", type=int, default=DEFAULT_GRID,
+        help=f"逻辑像素网格，默认 {DEFAULT_GRID}。按题材复杂度选："
+             "单一图形（奖牌、赛车）32 起，含解剖结构的角色 48–64",
+    )
     args = ap.parse_args()
+    if args.grid < 16 or args.grid > 128:
+        sys.exit(f"网格 {args.grid} 超出合理区间 16–128")
 
     if not args.input.is_dir():
         sys.exit(f"输入目录不存在: {args.input}")
@@ -132,7 +143,7 @@ def main():
 
     out_dir = args.output or args.input / "conformed"
     for path in files:
-        dest, coverage, colors, wm = conform(path, out_dir)
+        dest, coverage, colors, wm = conform(path, out_dir, args.grid)
 
         # 主体占比是构图的粗筛。火把、冰锥这类细长物天然偏低，
         # 所以只提示不判错——真正要人看的是过高：那通常是背景没抠干净
@@ -146,7 +157,8 @@ def main():
 
         print(f"{dest.name:34} 占比 {coverage:5.1%}  {colors:2d}色  水印 {wm:5d}px{flag}")
 
-    print(f"\n完成 {len(files)} 张 → {out_dir}（{OUT_SIZE}×{OUT_SIZE}）")
+    size = args.grid * SCALE
+    print(f"\n完成 {len(files)} 张 → {out_dir}（{size}×{size}，网格 {args.grid}）")
 
 
 if __name__ == "__main__":

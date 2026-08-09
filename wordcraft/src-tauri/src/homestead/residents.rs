@@ -15,7 +15,7 @@ use std::collections::HashMap;
 /// 每完成一张蓝图新增的入住位。索引对应阶段 1..4。
 ///
 /// 递增而非等量：小屋只住得下一个，城市该热闹些。
-/// 累计 6 位，而生物卡池共 16 张——位置始终稀缺，
+/// 累计 6 位，而可入住的活物共 24 张——位置始终稀缺，
 /// 让「让谁住进来」保持是个选择而不是照单全收。
 const SLOTS_PER_STAGE: [i64; 4] = [1, 1, 2, 2];
 
@@ -158,13 +158,24 @@ mod tests {
     }
 
     #[test]
-    fn 入住位始终少于生物卡池() {
-        // 位置比生物少，「让谁住进来」才是个选择。
-        // 卡池 16 张生物（见 004_card_pool.sql）
-        const CREATURE_CARDS: i64 = 16;
+    fn 入住位始终少于可入住的卡数() {
+        // 位置比活物少，「让谁住进来」才是个选择。
+        // 数量对真卡池查——写死的常量会随卡池改版悄悄失真，
+        // 蓝图描述就是这么漂移的
+        let mut conn = crate::test_support::in_memory_db();
+        crate::db::migrations::run(&mut conn).unwrap();
+        let living: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM cards WHERE card_type IN ('creature','guardian')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        assert!(living > 0, "卡池里没有任何可入住的活物");
         assert!(
-            max_slots() < CREATURE_CARDS,
-            "入住位 {} 已不少于生物总数 {CREATURE_CARDS}，选择消失",
+            max_slots() < living,
+            "入住位 {} 已不少于活物总数 {living}，选择消失",
             max_slots()
         );
     }

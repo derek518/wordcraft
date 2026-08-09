@@ -257,16 +257,20 @@ pub fn residents(conn: &Connection) -> Result<Vec<Resident>, String> {
         .map_err(|e| format!("读取居民失败: {e}"))
 }
 
-/// 已收集但尚未入住的生物。画作不能入住——它们是挂在墙上的，不是活物。
+/// 能入住的卡类型：活物才住得进来。
+/// 碎片、器物、神器是东西，不是住户。
+const LIVING: &str = "('creature', 'guardian')";
+
+/// 已收集但尚未入住的活物。
 pub fn resident_candidates(conn: &Connection) -> Result<Vec<Resident>, String> {
     let mut stmt = conn
-        .prepare(
+        .prepare(&format!(
             "SELECT c.id, c.name, c.image_path, c.rarity
              FROM cards c JOIN card_collection k ON k.card_id = c.id
-             WHERE c.card_type = 'creature'
+             WHERE c.card_type IN {LIVING}
                AND c.id NOT IN (SELECT card_id FROM homestead_residents)
-             ORDER BY c.rarity DESC, c.id",
-        )
+             ORDER BY c.rarity DESC, c.id"
+        ))
         .map_err(|e| format!("准备候选查询失败: {e}"))?;
 
     let rows = stmt
@@ -288,20 +292,22 @@ pub fn resident_candidates(conn: &Connection) -> Result<Vec<Resident>, String> {
 /// 让一只生物住进某个位置。
 ///
 /// 校验放在这里而非命令层：前端传什么都不该能写进一条无效记录。
-/// 未收集的卡、画作、已占用的位置，三种都必须被挡下且说明原因。
+/// 未收集的卡、非活物、已占用的位置，三种都必须被挡下且说明原因。
 pub fn move_in(conn: &Connection, slot: i64, card_id: i64, now: &str) -> Result<(), String> {
     let collected: bool = conn
         .query_row(
-            "SELECT EXISTS(
-               SELECT 1 FROM cards c JOIN card_collection k ON k.card_id = c.id
-               WHERE c.id = ?1 AND c.card_type = 'creature')",
+            &format!(
+                "SELECT EXISTS(
+                   SELECT 1 FROM cards c JOIN card_collection k ON k.card_id = c.id
+                   WHERE c.id = ?1 AND c.card_type IN {LIVING})"
+            ),
             [card_id],
             |r| r.get(0),
         )
         .map_err(|e| format!("校验卡牌失败: {e}"))?;
 
     if !collected {
-        return Err(format!("卡牌 {card_id} 尚未收集，或不是生物卡"));
+        return Err(format!("卡牌 {card_id} 尚未收集，或不是能入住的活物"));
     }
 
     // 位置已有住户时先请出去。用户点的是「换成这只」，

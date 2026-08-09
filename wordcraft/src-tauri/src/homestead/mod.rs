@@ -453,23 +453,23 @@ mod tests {
             conn
         }
 
-        /// 卡池里第一张生物卡与第一张画作的 id。
+        /// 卡池里第一张活物卡，与第一张非活物卡（碎片/器物/神器）的 id。
         fn 卡池(conn: &Connection) -> (i64, i64) {
-            let creature = conn
+            let living = conn
                 .query_row(
-                    "SELECT id FROM cards WHERE card_type='creature' ORDER BY id LIMIT 1",
+                    "SELECT id FROM cards WHERE card_type IN ('creature','guardian') ORDER BY id LIMIT 1",
                     [],
                     |r| r.get(0),
                 )
                 .unwrap();
-            let painting = conn
+            let thing = conn
                 .query_row(
-                    "SELECT id FROM cards WHERE card_type='painting' ORDER BY id LIMIT 1",
+                    "SELECT id FROM cards WHERE card_type NOT IN ('creature','guardian') ORDER BY id LIMIT 1",
                     [],
                     |r| r.get(0),
                 )
                 .unwrap();
-            (creature, painting)
+            (living, thing)
         }
 
         #[test]
@@ -497,8 +497,7 @@ mod tests {
 
             let s = residents_snapshot(&conn).unwrap();
             let ids: Vec<i64> = s.candidates.iter().map(|c| c.card_id).collect();
-            // 画作是挂墙上的，不是活物
-            assert_eq!(ids, vec![creature], "候选应只含已收集的生物卡");
+            assert_eq!(ids, vec![creature], "候选应只含已收集的活物");
         }
 
         #[test]
@@ -529,14 +528,15 @@ mod tests {
         }
 
         #[test]
-        fn 画作不能入住() {
+        fn 碎片器物不能入住() {
             let mut conn = db(30, 0);
             migrations::run(&mut conn).unwrap();
             let (_, painting) = 卡池(&conn);
             let conn = 有小屋的家园(&[painting]);
 
+            // 碎片、器物、神器是东西，不是住户
             let err = repo::move_in(&conn, 0, painting, &clock::now()).unwrap_err();
-            assert!(err.contains("生物卡"), "{err}");
+            assert!(err.contains("活物"), "{err}");
         }
 
         #[test]

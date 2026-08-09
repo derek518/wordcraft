@@ -34,6 +34,10 @@ pub struct SeasonState {
     /// 本周若现在结算能得多少分
     pub projected_points: i64,
     pub track_points: i64,
+    /// 计分参数。前端要在里程碑上标出「到这里能拿多少分」，
+    /// 而那个数字只能有一个来源——写死在前端必然与这里漂移
+    pub points_per_session: i64,
+    pub perfect_bonus: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -96,6 +100,8 @@ fn state_of(conn: &Connection, today: NaiveDate) -> Result<SeasonState, String> 
         ghost_sessions: ghost,
         projected_points: points_for(done),
         track_points: player_stats::get(conn)?.track_points,
+        points_per_session: scoring::POINTS_PER_SESSION,
+        perfect_bonus: scoring::PERFECT_WEEK_BONUS,
     })
 }
 

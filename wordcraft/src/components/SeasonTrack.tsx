@@ -19,12 +19,15 @@ const MILESTONES = [
   { at: 21, label: '完美一周', icon: '/assets/ui/crown.png', color: '#ff6b6b', desc: '完成全部时段' },
 ]
 
-function formatDateRange(startStr: string): string {
-  const start = new Date(startStr)
-  const end = new Date(start)
-  end.setDate(end.getDate() + 6)
-  const fmt = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}`
-  return `${fmt(start)} - ${fmt(end)}`
+/** 起止日期都由后端给出。前端自己加六天等于第二个日历实现，
+    而且 `new Date('2026-08-03')` 按 UTC 解析、再用本地时区读取，
+    在 UTC 以西会整体差一天 */
+function formatDateRange(startStr: string, endStr: string): string {
+  const md = (iso: string) => {
+    const [, m, d] = iso.split('-')
+    return `${Number(m)}/${Number(d)}`
+  }
+  return `${md(startStr)} - ${md(endStr)}`
 }
 
 export default function SeasonTrack({ onBack }: SeasonTrackProps) {
@@ -97,7 +100,7 @@ export default function SeasonTrack({ onBack }: SeasonTrackProps) {
   const ahead = season.sessions_done - season.ghost_sessions
   const pct = Math.round(season.progress * 100)
   const ghostPct = Math.round(season.ghost_progress * 100)
-  const dateRange = formatDateRange(season.week_start)
+  const dateRange = formatDateRange(season.week_start, season.week_end)
 
   // 已完成里程碑
   const nextMilestone = MILESTONES.find(m => season.sessions_done < m.at)

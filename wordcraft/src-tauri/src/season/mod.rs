@@ -24,6 +24,8 @@ const TRACK_SESSION_TYPES: [&str; 3] = ["morning", "noon", "evening"];
 pub struct SeasonState {
     /// 本周周一
     pub week_start: String,
+    /// 本周周日。与 week_start 一同给出，免得前端各自再算一遍日历
+    pub week_end: String,
     pub sessions_done: i64,
     pub sessions_total: i64,
     /// 赛车位置 0.0–1.0
@@ -93,6 +95,7 @@ fn state_of(conn: &Connection, today: NaiveDate) -> Result<SeasonState, String> 
 
     Ok(SeasonState {
         week_start: start.to_string(),
+        week_end: (start + chrono::Duration::days(6)).to_string(),
         sessions_done: done,
         sessions_total: SESSIONS_PER_WEEK,
         progress: track_ratio(done),

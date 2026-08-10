@@ -126,6 +126,7 @@ const STATS: OverallStats = {
 
 const SEASON: SeasonState = {
   week_start: '2026-08-03',
+  week_end: '2026-08-09',
   sessions_done: 12,
   sessions_total: 21,
   progress: 12 / 21,

@@ -33,8 +33,8 @@ export interface Question {
  * 两处降级，都不是临时妥协：
  * - **Lv.5 只对核心词开放**（决议 S10）。拼写是认知负荷最高、挫败感最强的题型，
  *   而产品目标是词汇量覆盖（认识词）而非写作产出。低频词止步 Lv.4。
- * - **Lv.3 需要音频**。发音尚未接入（MOCKS M2），此时出听音辨词题等于让用户
- *   面对无声的题面盲猜。有音频前降到 Lv.2。
+ * - **Lv.3 需要音频**。发音已接入（T19），但用户可以在设置里关掉 TTS，
+ *   届时出听音辨词题等于让人对着无声的题面盲猜，故降到 Lv.2。
  */
 export function effectiveLevel(item: QueueItem, audioAvailable: boolean): QuestionType {
   let level = item.question_level

@@ -36,6 +36,7 @@ export default function WordLibrary({ onBack }: WordLibraryProps) {
   const [zone, setZone] = useState<string | null>(null)
   const [results, setResults] = useState<api.LibraryWord[]>([])
   const [zones, setZones] = useState<api.ZoneProgress[]>([])
+  const [total, setTotal] = useState(0)
   const [error, setError] = useState('')
   const [searching, setSearching] = useState(false)
   const [detail, setDetail] = useState<api.LibraryWord | null>(null)
@@ -43,7 +44,9 @@ export default function WordLibrary({ onBack }: WordLibraryProps) {
   useEffect(() => {
     void (async () => {
       try {
-        setZones(await api.getZoneProgress())
+        const [z, stats] = await Promise.all([api.getZoneProgress(), api.getOverallStats()])
+        setZones(z)
+        setTotal(stats.total_words)
       } catch {
         // 区域筛选拿不到时退化为纯搜索，不阻断主功能
       }
@@ -144,7 +147,11 @@ export default function WordLibrary({ onBack }: WordLibraryProps) {
           <p className="text-sm text-wc-text-muted">
             输入单词或中文释义开始查找
             <br />
-            <span className="text-xs">词库共 3,657 个高考考纲词</span>
+            {/* 总数取自后端。写死的数字会在词库更新后悄悄变成谎话——
+                蓝图描述与赛道积分都栽在同一件事上 */}
+            <span className="text-xs">
+              词库共 {total.toLocaleString()} 个高考考纲词
+            </span>
           </p>
         </div>
       ) : searching ? (

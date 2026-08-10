@@ -328,6 +328,7 @@ export const defeatBoss = (wordId: number) =>
 
 export interface SeasonState {
   week_start: string
+  week_end: string
   sessions_done: number
   sessions_total: number
   progress: number

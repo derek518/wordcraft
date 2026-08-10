@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""从 docs/card-art-prompts.md 拼装逐卡提示词，输出 TSV。
+"""从 docs/card-art-prompts.md 拼装提示词，输出 TSV。
 
-    python3 scripts/cards/build_prompts.py > scripts/cards/card_prompts.tsv
+    python3 scripts/cards/build_prompts.py       > scripts/cards/card_prompts.tsv
+    python3 scripts/cards/build_prompts.py --ui  > scripts/cards/ui_prompts.tsv
 
 **提示词只有一个真相来源：那份 Markdown。** 手工维护一份平铺的 TSV，改了文档
 却忘了重出，下一轮就会照着旧规格重生成——v1 的 50×50 网格与 8 色锁板正是
@@ -38,6 +39,32 @@ def extract_block(md, heading, fence_index=0):
     return flatten(fences[fence_index])
 
 
+# 界面精灵图的网格，按题材复杂度分档（§11）
+UI_GRID = {"boss_tier1": 48, "boss_tier2": 48, "boss_tier3": 48, "boss_tier4": 48}
+UI_GRID_DEFAULT = 32
+
+
+def build_ui(md, style, negative):
+    """§11 界面精灵图。它们不属于任何元素，故不套色阶。"""
+    entries = re.findall(
+        r"\*\*`([a-z_0-9]+\.png)`[^\n]*\n(?:>[^\n]*\n)+\n```\n(SUBJECT: .*?)```",
+        md[md.index("## 11. 界面精灵图") :],
+        re.S,
+    )
+    if len(entries) != 9:
+        sys.exit(f"§11 解析出 {len(entries)} 条，应为 9")
+
+    print("file\tgrid\tprompt\tnegative")
+    for name, subject in entries:
+        grid = UI_GRID.get(name[:-4], UI_GRID_DEFAULT)
+        body = flatten(subject).removeprefix("SUBJECT: ")
+        # 魔王四档要看出强弱递进，奖牌四枚要靠形状分级——都写进提示词
+        tier = ("bold readable silhouette, strong value contrast, 10 to 16 colours"
+                if grid >= 48 else
+                "single clear shape, high contrast, legible at 24 pixels, 6 to 12 colours")
+        print(f"{name}\t{grid}\t{style}, {body}, {tier}\t{negative}")
+
+
 def main():
     if not DOC.exists():
         sys.exit(f"找不到 {DOC}")
@@ -45,6 +72,10 @@ def main():
 
     style = extract_block(md, "3. 通用风格块")
     negative = extract_block(md, "4. 负面提示词")
+
+    if "--ui" in sys.argv:
+        build_ui(md, style, negative)
+        return
 
     # §5 色阶表：| 元素名 | 高光 | 亮 | 中 | 暗 | 描边 |
     ramps = {}

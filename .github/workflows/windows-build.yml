@@ -1,0 +1,130 @@
+name: Windows 构建
+
+# 目标平台是 Windows 10/11，而开发机是 macOS。
+# 这个项目**不能交叉编译**：rusqlite 捆绑编译 SQLite 的 C 源码，需要真正的
+# MSVC 工具链（见 CLAUDE.md 的 rusqlite 版本锁定说明）。所以必须用真 Windows 构建机。
+#
+# CI 能证明的：编译通过、能打出 .msi / .exe、Windows 专有代码 windows_impl.rs
+# 真的被编译过（此前只在开发机上做过单文件类型检查）。
+# CI **不能**证明的：全屏检测的行为对不对——SHQueryUserNotificationState
+# 要真的开个全屏游戏才知道，那步只能人做。见 MOCKS.md 的 S1。
+#
+# 安全说明：本文件不把任何不可信输入（issue 标题、commit message、分支名等）
+# 插进 run: 命令。仅有的表达式是 hashFiles()、steps 输出与 github.ref 的条件判断。
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write   # 打 tag 时需要建 release，其余步骤只读
+
+env:
+  CARGO_TERM_COLOR: always
+  # crates.io 的 sparse index 偶发超时，与本地开发同样的处置
+  CARGO_NET_RETRY: '10'
+  CARGO_HTTP_TIMEOUT: '120'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: wordcraft
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: wordcraft/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Tauri 的依赖树很大，冷编译十几分钟起
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: wordcraft/src-tauri
+
+      - run: npm ci
+
+      # ── 发音音频 ──────────────────────────────
+      #
+      # 3657 个 mp3 约 44MB，被 .gitignore 排除（二进制会让仓库永久膨胀，
+      # 且每次重新生成都产生全新 blob）。但 tauri.conf.json 把 audio/*
+      # 声明成了打包资源，CI 上目录不存在会导致打包缺资源。
+      #
+      # edge-tts 免费且不需要密钥，所以让 CI 自己生成；再按词库哈希缓存，
+      # 词库不变就直接复用，不必每次重跑三千多次请求。
+      - name: 音频缓存
+        id: audio-cache
+        uses: actions/cache@v4
+        with:
+          path: wordcraft/src-tauri/audio
+          key: audio-${{ hashFiles('wordcraft/public/library.json') }}
+
+      - name: 生成发音
+        if: steps.audio-cache.outputs.cache-hit != 'true'
+        working-directory: .
+        run: |
+          python -m pip install --quiet edge-tts
+          python scripts/tts/pregenerate.py --concurrency 8
+
+      # 生成失败或被跳过时兜底：目录必须存在，否则打包阶段找不到资源。
+      # 宁可出一个没有发音的包，也不要让整条流水线在最后一步倒下——
+      # 应用本身能降级（无音频时听音辨词题自动降为中译英）
+      - name: 确保音频目录存在
+        shell: pwsh
+        run: |
+          $dir = "src-tauri/audio"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $count = (Get-ChildItem $dir -Filter *.mp3 -ErrorAction SilentlyContinue).Count
+          if ($count -eq 0) {
+            Write-Warning "音频为空，本次产物不含发音"
+            Set-Content "$dir/README.txt" "audio generation was skipped for this build"
+          }
+          Write-Host "音频文件数: $count"
+
+      # ── 质量门禁 ──────────────────────────────
+      #
+      # 与本地同一套。tsc 必须用 -b：tsconfig.json 是 files:[] 的
+      # solution 式配置，`tsc --noEmit` 检查的是零个文件
+      - run: npx tsc -b --noEmit
+      - run: npm run lint
+      - run: npm test
+
+      - name: Rust 检查
+        working-directory: wordcraft/src-tauri
+        run: |
+          cargo clippy --all-targets -- -D warnings
+          cargo test
+
+      # ── 打包 ──────────────────────────────
+      - name: Tauri 打包
+        run: npm run tauri build
+
+      - name: 产出清单
+        shell: pwsh
+        run: |
+          Get-ChildItem -Recurse src-tauri/target/release/bundle -Include *.msi,*.exe |
+            ForEach-Object { "{0}  {1:N1} MB" -f $_.Name, ($_.Length / 1MB) }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wordcraft-windows
+          path: |
+            wordcraft/src-tauri/target/release/bundle/msi/*.msi
+            wordcraft/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+
+      # 打 tag 时顺带发一个 release，省得每次去 Actions 页面翻产物
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          files: |
+            wordcraft/src-tauri/target/release/bundle/msi/*.msi
+            wordcraft/src-tauri/target/release/bundle/nsis/*.exe

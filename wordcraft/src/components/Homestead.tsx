@@ -59,8 +59,15 @@ export default function Homestead({ onBack }: HomesteadProps) {
 
   /** 上一次已知的完成集合。用来识别「刚刚建成」而非「本来就建好了」 */
   const knownDone = useRef<Set<string> | null>(null)
-  /** 拖动中：按下不放划过多个格子 */
-  const painting = useRef(false)
+  /**
+   * 涂抹模式，由**按下时那一格**决定，整笔不变。
+   *
+   * 先前这里是个布尔量，而每格的操作类型取自「进入格自己有没有方块」——
+   * 于是回划到刚填好的格子上，它此时已有方块，就被擦掉了。这正是
+   * 「来回划反复放了又拆」，也就是注释声称要防的那件事。
+   * `touchCell` 里的守卫当时也是死的：`remove` 由 `existing` 推出，判断恒为假。
+   */
+  const painting = useRef<'place' | 'erase' | null>(null)
 
   const load = useCallback(async () => {
     setError('')
@@ -88,7 +95,7 @@ export default function Homestead({ onBack }: HomesteadProps) {
   // 松开鼠标就结束涂抹，即便指针已经离开网格
   useEffect(() => {
     const stop = () => {
-      painting.current = false
+      painting.current = null
     }
     window.addEventListener('pointerup', stop)
     return () => window.removeEventListener('pointerup', stop)
@@ -145,7 +152,7 @@ export default function Homestead({ onBack }: HomesteadProps) {
       await refreshResidents()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
-      painting.current = false
+      painting.current = null
     } finally {
       setBusy(false)
     }
@@ -335,12 +342,14 @@ export default function Homestead({ onBack }: HomesteadProps) {
                 key={i}
                 onPointerDown={(e) => {
                   e.preventDefault()
-                  painting.current = true
-                  void touchCell(x, y, !!block)
+                  // 整笔的模式在此定下：起点是空格就一路放，是方块就一路拆
+                  painting.current = block ? 'erase' : 'place'
+                  void touchCell(x, y, painting.current === 'erase')
                 }}
                 onPointerEnter={() => {
-                  // 涂抹方向由起点决定：起点是空格就一路放，是方块就一路拆
-                  if (painting.current && !busy) void touchCell(x, y, !!block)
+                  if (painting.current && !busy) {
+                    void touchCell(x, y, painting.current === 'erase')
+                  }
                 }}
                 disabled={busy}
                 title={

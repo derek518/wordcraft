@@ -21,6 +21,8 @@ export default function PlacementTest({ onFinish }: PlacementTestProps) {
   const [cardGlow, setCardGlow] = useState<'default' | 'correct' | 'wrong'>('default')
 
   const startedAt = useRef(0)
+  /** 本题是否已提交。见 answer() 里对 state 守卫为何不够的说明 */
+  const submitting = useRef(false)
 
   const loadNext = useCallback(async () => {
     try {
@@ -57,7 +59,11 @@ export default function PlacementTest({ onFinish }: PlacementTestProps) {
   }, [loadNext])
 
   const answer = async (option: string | null) => {
-    if (!question || selected) return
+    // `selected` 是 state，React 会批处理——同一 tick 内的两次点击都读到 null，
+    // 于是同一题提交两次，污染该频段的通过率，进而算错词汇量。
+    // ref 的赋值不经批处理，立即生效
+    if (!question || selected || submitting.current) return
+    submitting.current = true
 
     const reactionMs = Date.now() - startedAt.current
     const correct = option === question.meaning
@@ -73,6 +79,8 @@ export default function PlacementTest({ onFinish }: PlacementTestProps) {
     } catch (e) {
       setErrorMessage(e instanceof Error ? e.message : String(e))
       setPhase('error')
+    } finally {
+      submitting.current = false
     }
   }
 

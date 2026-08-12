@@ -70,6 +70,12 @@ jobs:
       - name: 生成发音
         if: steps.audio-cache.outputs.cache-hit != 'true'
         working-directory: .
+        env:
+          # Windows 上 Python 的 stdout 默认走 cp1252，脚本一打印中文就
+          # UnicodeEncodeError。脚本本身没问题，是运行环境的编码，
+          # 所以在这里修而不是把脚本的中文输出改掉
+          PYTHONUTF8: '1'
+          PYTHONIOENCODING: 'utf-8'
         run: |
           python -m pip install --quiet edge-tts
           python scripts/tts/pregenerate.py --concurrency 8

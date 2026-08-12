@@ -96,30 +96,45 @@ describe('赛季赛道', () => {
     expect(mine!.parentElement).not.toBe(ghost!.parentElement)
   })
 
-  it('未达成的里程碑刻度不可点击', async () => {
+  it('里程碑刻度不是按钮', async () => {
     await mount(season({ sessions_done: 1, progress: 1 / 21 }))
 
-    // 四个刻度原先都是无 disabled 的按钮，onClick 里靠 `reached &&` 静默返回。
-    // 光标是手型、有 hover 效果，点下去却毫无反应——用户会一个个点过去等结果
-    const marks = [...document.querySelectorAll('button')].filter((b) =>
+    // 原先四个刻度都是无 disabled 的按钮，onClick 里靠 `reached &&` 静默返回：
+    // 手型光标、hover 效果一应俱全，点下去毫无反应。真实会话里用户
+    // 一个个点过去点了四次
+    const clickable = [...document.querySelectorAll('button')].filter((b) =>
       b.querySelector('img[src*="medal"], img[src*="crown"]'),
     )
-    expect(marks.length).toBe(4)
-    expect(marks.every((b) => (b as HTMLButtonElement).disabled)).toBe(true)
+    expect(clickable.length).toBe(0)
 
-    // 悬停要能说明为什么点不了
+    // 但悬停仍要能说明还差多少
+    const marks = [...document.querySelectorAll('span[title]')].filter((el) =>
+      el.querySelector('img[src*="medal"], img[src*="crown"]'),
+    )
+    expect(marks.length).toBe(4)
     expect(marks[0].getAttribute('title')).toMatch(/还差 2 个时段/)
   })
 
-  it('达成的里程碑刻度可以点开庆祝', async () => {
-    await mount(season({ sessions_done: 8, progress: 8 / 21 }))
+  it('跨过里程碑时自动庆祝一次，并记下已看过的档位', async () => {
+    vi.spyOn(api, 'getSetting').mockResolvedValue('0')
+    const set = vi.spyOn(api, 'setSetting').mockResolvedValue(undefined)
 
-    const marks = [...document.querySelectorAll('button')].filter((b) =>
-      b.querySelector('img[src*="medal"], img[src*="crown"]'),
-    )
-    // 3 与 7 已达成，14 与 21 未达成
-    expect(marks.filter((b) => !(b as HTMLButtonElement).disabled).length).toBe(2)
-    expect(marks[0].getAttribute('title')).toMatch(/已达成/)
+    await mount(season({ sessions_done: 8, progress: 8 / 21 }))
+    await act(async () => { await Promise.resolve() })
+
+    // 8 个时段跨过了 3 与 7，应庆祝最高的那档
+    expect(set).toHaveBeenCalledWith('season_milestone_seen', '7')
+  })
+
+  it('已庆祝过的档位不再重放', async () => {
+    vi.spyOn(api, 'getSetting').mockResolvedValue('7')
+    const set = vi.spyOn(api, 'setSetting').mockResolvedValue(undefined)
+
+    await mount(season({ sessions_done: 8, progress: 8 / 21 }))
+    await act(async () => { await Promise.resolve() })
+
+    // 否则每次打开赛道页都放一遍，成就就变成了屏保
+    expect(set).not.toHaveBeenCalled()
   })
 
   it('起止日期取自后端，前端不自己算日历', async () => {

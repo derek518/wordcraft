@@ -11,6 +11,9 @@ const REDEEM_ITEMS = [
   { id: 'makeup_card', label: '补签卡', cost: 150, icon: '/assets/badges/badge_perfect.png', hint: '断签时自动消耗，保住连续天数' },
 ]
 
+/** 已庆祝过的最高里程碑。契约见 contracts-v1.md §2.1 */
+const MILESTONE_SEEN_KEY = 'season_milestone_seen'
+
 /** 里程碑配置 */
 const MILESTONES = [
   { at: 3, label: '初出茅庐', icon: '/assets/ui/medal_bronze.png', color: '#cd7f32', desc: '完成3个时段' },
@@ -37,16 +40,43 @@ export default function SeasonTrack({ onBack }: SeasonTrackProps) {
   const [flash, setFlash] = useState('')
   const [celebrateMilestone, setCelebrateMilestone] = useState<number | null>(null)
 
+  /**
+   * 跨过里程碑时自动庆祝，且只放一次。
+   *
+   * 原先庆祝挂在点击上，成了可以反复重播的空动画——想看几遍看几遍的成就
+   * 没有分量。真正有价值的时刻是**刚跨过去那一下**，所以改成自动触发，
+   * 并把已庆祝过的最高档记在 settings 里，免得每次打开赛道页都重放一遍。
+   */
+  const celebrateIfCrossed = useCallback(async (done: number) => {
+    const highest = [...MILESTONES].reverse().find((m) => done >= m.at)
+    if (!highest) return
+
+    try {
+
+      const seen = Number((await api.getSetting(MILESTONE_SEEN_KEY)) ?? 0)
+      if (highest.at <= seen) return
+
+      await api.setSetting(MILESTONE_SEEN_KEY, String(highest.at))
+      playLevelUp()
+      setCelebrateMilestone(highest.at)
+      setTimeout(() => setCelebrateMilestone(null), 2500)
+    } catch {
+      // 庆祝是锦上添花。记不住「已放过」顶多下次多放一遍，
+      // 不该因此让整个赛道页报错
+    }
+  }, [])
+
   const load = useCallback(async () => {
     setError('')
     try {
       const s = await api.getSeason()
       setSeason(s)
+      void celebrateIfCrossed(s.sessions_done)
     } catch (e) {
       // 后端失败一律显示错误态。纯前端调试走 VITE_MOCK=1，见 src/data/devMock.ts
       setError(e instanceof Error ? e.message : String(e))
     }
-  }, [])
+  }, [celebrateIfCrossed])
 
   useEffect(() => {
     void load()
@@ -69,12 +99,6 @@ export default function SeasonTrack({ onBack }: SeasonTrackProps) {
     } finally {
       setBusy(false)
     }
-  }
-
-  const triggerMilestone = (at: number) => {
-    playLevelUp()
-    setCelebrateMilestone(at)
-    setTimeout(() => setCelebrateMilestone(null), 2500)
   }
 
   if (!season) {
@@ -174,17 +198,13 @@ export default function SeasonTrack({ onBack }: SeasonTrackProps) {
                 const pos = (m.at / season.sessions_total) * 100
                 const reached = season.sessions_done >= m.at
                 return (
-                  // 未达成时用 disabled 而非静默 no-op。原先四个刻度都是
-                  // 可点按钮却什么都不做，光标还是手型——用户会一个个点过去
-                  // 等反应。tooltip 也换成「还差多少」，让悬停能解释原因
-                  <button
+                  // **刻度不是按钮。** 它标的是进度上的一个位置，不是可领取的
+                  // 奖品——每个时段的 10 分早就发过了，里程碑只是把「21 个时段」
+                  // 切成够得着的几段。原先它是可点按钮却什么都不做，
+                  // 四个刻度就是四个骗人点击的假控件
+                  <span
                     key={m.at}
-                    disabled={!reached}
-                    onClick={() => triggerMilestone(m.at)}
-                    // 100% 处的刻度会被圆角容器切掉一半，往回收 14px
-                    className={`absolute top-1/2 -translate-y-1/2 transition-all ${
-                      reached ? 'cursor-pointer hover:scale-125' : 'cursor-default'
-                    }`}
+                    className="absolute top-1/2 -translate-y-1/2 transition-all"
                     style={{ left: `min(calc(${pos}% - 8px), calc(100% - 22px))` }}
                     title={
                       reached
@@ -198,7 +218,7 @@ export default function SeasonTrack({ onBack }: SeasonTrackProps) {
                       className={`w-5 h-5 object-contain ${reached ? 'grayscale-0' : 'grayscale opacity-30'}`}
                       style={{ imageRendering: 'pixelated' }}
                     />
-                  </button>
+                  </span>
                 )
               })}
 

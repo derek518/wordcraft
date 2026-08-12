@@ -155,6 +155,7 @@ CREATE TABLE settings (
 | `sound_enabled` | `"true"` | |
 | `autostart_enabled` | `"true"` | |
 | `tts_provider` | `"edge"` | `edge` \| `sapi` \| `off` |
+| `season_milestone_seen` | `"0"` | 已庆祝过的最高赛道里程碑（时段数）。庆祝在**跨过的那一刻放一次**，靠这个键保证不会每次打开赛道页都重放 |
 
 ---
 

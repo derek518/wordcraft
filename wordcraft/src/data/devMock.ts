@@ -196,6 +196,7 @@ const HANDLERS: Record<string, (args?: Record<string, unknown>) => unknown> = {
       onboarding_done: 'true',
       sound_enabled: 'true',
       tts_provider: 'edge',
+      season_milestone_seen: '0',
       session_windows: '09:00-11:00,13:00-15:00,19:00-21:00',
     } as Record<string, string>)[key] ?? null
   },

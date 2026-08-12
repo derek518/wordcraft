@@ -96,6 +96,32 @@ describe('赛季赛道', () => {
     expect(mine!.parentElement).not.toBe(ghost!.parentElement)
   })
 
+  it('未达成的里程碑刻度不可点击', async () => {
+    await mount(season({ sessions_done: 1, progress: 1 / 21 }))
+
+    // 四个刻度原先都是无 disabled 的按钮，onClick 里靠 `reached &&` 静默返回。
+    // 光标是手型、有 hover 效果，点下去却毫无反应——用户会一个个点过去等结果
+    const marks = [...document.querySelectorAll('button')].filter((b) =>
+      b.querySelector('img[src*="medal"], img[src*="crown"]'),
+    )
+    expect(marks.length).toBe(4)
+    expect(marks.every((b) => (b as HTMLButtonElement).disabled)).toBe(true)
+
+    // 悬停要能说明为什么点不了
+    expect(marks[0].getAttribute('title')).toMatch(/还差 2 个时段/)
+  })
+
+  it('达成的里程碑刻度可以点开庆祝', async () => {
+    await mount(season({ sessions_done: 8, progress: 8 / 21 }))
+
+    const marks = [...document.querySelectorAll('button')].filter((b) =>
+      b.querySelector('img[src*="medal"], img[src*="crown"]'),
+    )
+    // 3 与 7 已达成，14 与 21 未达成
+    expect(marks.filter((b) => !(b as HTMLButtonElement).disabled).length).toBe(2)
+    expect(marks[0].getAttribute('title')).toMatch(/已达成/)
+  })
+
   it('起止日期取自后端，前端不自己算日历', async () => {
     await mount(season({ week_start: '2026-12-28', week_end: '2027-01-03' }))
 

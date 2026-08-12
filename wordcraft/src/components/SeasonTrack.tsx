@@ -174,13 +174,23 @@ export default function SeasonTrack({ onBack }: SeasonTrackProps) {
                 const pos = (m.at / season.sessions_total) * 100
                 const reached = season.sessions_done >= m.at
                 return (
+                  // 未达成时用 disabled 而非静默 no-op。原先四个刻度都是
+                  // 可点按钮却什么都不做，光标还是手型——用户会一个个点过去
+                  // 等反应。tooltip 也换成「还差多少」，让悬停能解释原因
                   <button
                     key={m.at}
-                    onClick={() => reached && triggerMilestone(m.at)}
+                    disabled={!reached}
+                    onClick={() => triggerMilestone(m.at)}
                     // 100% 处的刻度会被圆角容器切掉一半，往回收 14px
-                    className="absolute top-1/2 -translate-y-1/2 transition-all"
+                    className={`absolute top-1/2 -translate-y-1/2 transition-all ${
+                      reached ? 'cursor-pointer hover:scale-125' : 'cursor-default'
+                    }`}
                     style={{ left: `min(calc(${pos}% - 8px), calc(100% - 22px))` }}
-                    title={m.desc}
+                    title={
+                      reached
+                        ? `${m.label} · 已达成`
+                        : `${m.label} · 还差 ${m.at - season.sessions_done} 个时段`
+                    }
                   >
                     <img
                       src={m.icon}

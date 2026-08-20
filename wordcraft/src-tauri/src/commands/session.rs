@@ -114,7 +114,7 @@ pub fn get_today_sessions(db: State<Db>) -> Result<Vec<sessions::Session>, Strin
 /// 延后时长。契约 §3.3：点「稍后」后 15 分钟内不重复弹出；出窗口则并入下一时段。
 const POSTPONE_MINUTES: i64 = 15;
 
-fn record_postpone(conn: &Connection, session_id: i64) -> Result<PostponeResult, String> {
+pub(crate) fn record_postpone(conn: &Connection, session_id: i64) -> Result<PostponeResult, String> {
     let remaining = sessions::postpone(conn, session_id)?;
     let session = sessions::find_by_id(conn, session_id)?
         .ok_or_else(|| format!("会话 {session_id} 不存在"))?;

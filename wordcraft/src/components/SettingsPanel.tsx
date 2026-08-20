@@ -24,23 +24,27 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
   const [wordCount, setWordCount] = useState('20')
   const [sound, setSound] = useState(true)
   const [tts, setTts] = useState('edge')
+  const [autostart, setAutostart] = useState(true)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState('')
+  const [exporting, setExporting] = useState(false)
 
   const load = useCallback(async () => {
     try {
-      const [w, n, c, s, t] = await Promise.all([
+      const [w, n, c, s, t, a] = await Promise.all([
         api.getSetting('session_windows'),
         api.getSetting('daily_new_words'),
         api.getSetting('session_word_count'),
         api.getSetting('sound_enabled'),
         api.getSetting('tts_provider'),
+        api.getSetting('autostart_enabled'),
       ])
       setWindows(w ?? WINDOW_PRESETS[0].value)
       setNewWords(n ?? '6')
       setWordCount(c ?? '20')
       setSound(s !== 'false')
       setTts(t ?? 'edge')
+      setAutostart(a !== 'false')
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
@@ -61,6 +65,42 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       void load()
+    }
+  }
+
+  const toggleAutostart = async () => {
+    const next = !autostart
+    setError('')
+    try {
+      await api.setAutostart(next)
+      const actual = await api.getSetting('autostart_enabled')
+      setAutostart(actual !== 'false')
+      setSaved('autostart_enabled')
+      setTimeout(() => setSaved(''), 1500)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      void load()
+    }
+  }
+
+  const exportData = async () => {
+    setError('')
+    setExporting(true)
+    try {
+      const json = await api.exportDataJson()
+      const blob = new Blob([json], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `wordcraft-${new Date().toISOString().slice(0, 10)}.json`
+      link.click()
+      URL.revokeObjectURL(url)
+      setSaved('export')
+      setTimeout(() => setSaved(''), 1500)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setExporting(false)
     }
   }
 
@@ -214,11 +254,48 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
             ))}
           </div>
         </Row>
-      </div>
 
-      <p className="text-xs text-wc-text-muted mt-4 text-center">
-        开机自启在系统托盘菜单中设置
-      </p>
+        <Row
+          title="开机自启"
+          hint="登录系统后自动常驻托盘，到点弹出训练。关闭后只能手动打开。"
+          settingKey="autostart_enabled"
+        >
+          <button
+            aria-label="开机自启"
+            onClick={() => void toggleAutostart()}
+            className={`px-4 py-2 rounded-xl border text-sm transition flex items-center gap-2 ${
+              autostart
+                ? 'border-wc-success bg-wc-success/10 text-wc-success'
+                : 'border-wc-border bg-wc-surface-2 text-wc-text-muted'
+            }`}
+          >
+            <div className={`toggle-switch ${autostart ? 'on' : ''}`} style={{ pointerEvents: 'none' }} />
+            <span>{autostart ? '已开启' : '已关闭'}</span>
+          </button>
+        </Row>
+
+        <div className="py-4">
+          <div className="flex items-center justify-between mb-1">
+            <span className="font-medium font-game">导出学习数据</span>
+            {saved === 'export' && (
+              <span className="text-xs text-wc-success flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-wc-success" />
+                已导出
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-wc-text-muted mb-3">
+            下载一份 JSON，包含词库状态与作答记录，便于换机或备份。
+          </p>
+          <button
+            onClick={() => void exportData()}
+            disabled={exporting}
+            className="px-4 py-2 rounded-xl border border-wc-border bg-wc-surface-2 text-sm hover:border-wc-primary/50 transition disabled:opacity-40"
+          >
+            {exporting ? '正在导出…' : '导出 JSON'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

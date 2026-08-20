@@ -2,7 +2,8 @@
 
 use crate::db::{repo::settings, Db};
 use rusqlite::Connection;
-use tauri::State;
+use tauri::{AppHandle, Manager, Runtime, State};
+use tauri_plugin_autostart::ManagerExt;
 
 /// 可写键白名单及其取值约束。
 ///
@@ -111,9 +112,32 @@ pub fn get_setting(db: State<Db>, key: String) -> Result<Option<String>, String>
     settings::get(&conn, &key)
 }
 
+/// 同步操作系统注册表 / LaunchAgent 与 settings 表。只写表不改系统，重启后开关会骗人。
+pub fn apply_autostart<R: Runtime>(app: &AppHandle<R>, enabled: bool) -> Result<(), String> {
+    let manager = app.autolaunch();
+    if enabled {
+        manager.enable().map_err(|e| format!("开启自启失败: {e}"))?;
+    } else {
+        manager.disable().map_err(|e| format!("关闭自启失败: {e}"))?;
+    }
+    let db = app.state::<Db>();
+    let conn = db.0.lock().map_err(|e| format!("获取数据库锁失败: {e}"))?;
+    settings::set(&conn, "autostart_enabled", if enabled { "true" } else { "false" })?;
+    log::info!("开机自启已{}", if enabled { "开启" } else { "关闭" });
+    Ok(())
+}
+
 #[tauri::command]
-pub fn set_setting(db: State<Db>, key: String, value: String) -> Result<(), String> {
+pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
+    apply_autostart(&app, enabled)
+}
+
+#[tauri::command]
+pub fn set_setting(app: AppHandle, db: State<Db>, key: String, value: String) -> Result<(), String> {
     validate(&key, &value)?;
+    if key == "autostart_enabled" {
+        return apply_autostart(&app, value == "true");
+    }
     let conn = db.0.lock().map_err(|e| format!("获取数据库锁失败: {e}"))?;
     settings::set(&conn, &key, &value)
 }

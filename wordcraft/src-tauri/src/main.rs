@@ -114,6 +114,10 @@ fn main() {
             tts::play_word_audio,
             scheduler::get_next_session_time,
             scheduler::trigger_popup_now,
+            scheduler::peek_popup_session,
+            scheduler::accept_popup,
+            scheduler::snooze_popup,
+            commands::config::set_autostart,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

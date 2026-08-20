@@ -236,6 +236,11 @@ const HANDLERS: Record<string, (args?: Record<string, unknown>) => unknown> = {
   play_word_audio: () => null,
   postpone_session: () => ({ remaining: 2 }),
   set_setting: () => null,
+  set_autostart: () => null,
+  export_data_json: () => '{"ok":true}',
+  peek_popup_session: () => 'morning',
+  accept_popup: () => null,
+  snooze_popup: () => null,
   mark_cards_seen: () => null,
   redeem_points: () => null,
 }

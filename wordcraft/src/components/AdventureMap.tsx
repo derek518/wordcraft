@@ -60,6 +60,7 @@ const ZONE_META: Record<string, { icon: string; element: string; desc: string }>
   fire: { icon: '🔥', element: 'fire', desc: '高中核心词' },
   thunder: { icon: '⚡', element: 'thunder', desc: '高中拓展词' },
   ice: { icon: '❄️', element: 'ice', desc: '高考高频词' },
+  rock: { icon: '🪨', element: 'rock', desc: '高考难点词' },
 }
 
 const ELEMENT_COLORS: Record<string, { bg: string; glow: string; text: string }> = {
@@ -69,6 +70,7 @@ const ELEMENT_COLORS: Record<string, { bg: string; glow: string; text: string }>
   fire: { bg: '#ef4444', glow: 'rgba(239, 68, 68, 0.4)', text: '#f87171' },
   thunder: { bg: '#a855f7', glow: 'rgba(168, 85, 247, 0.4)', text: '#c084fc' },
   ice: { bg: '#22d3ee', glow: 'rgba(103, 232, 249, 0.4)', text: '#67e8f9' },
+  rock: { bg: '#f59e0b', glow: 'rgba(245, 158, 11, 0.4)', text: '#fbbf24' },
 }
 
 export default function AdventureMap({ onStartTraining, onOpenStats, onOpenAlbum, onOpenHomestead, onOpenSeason, onOpenBoss, onOpenLibrary, stats }: AdventureMapProps) {
@@ -78,8 +80,10 @@ export default function AdventureMap({ onStartTraining, onOpenStats, onOpenAlbum
   const [pickingDrill, setPickingDrill] = useState(false)
   // 听写模式需要发音。关掉 TTS 还让人选，进去只会得到一道无声的题
   const [audioOn, setAudioOn] = useState(true)
+  const [loadError, setLoadError] = useState('')
 
   const loadSessions = useCallback(async () => {
+    setLoadError('')
     try {
       const [s, z, tts] = await Promise.all([
         api.getTodaySessions(),
@@ -89,9 +93,8 @@ export default function AdventureMap({ onStartTraining, onOpenStats, onOpenAlbum
       setSessions(s)
       setZones(z)
       setAudioOn(tts !== 'off')
-    } catch {
-      setSessions([])
-      setZones([])
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : String(e))
     }
   }, [])
 
@@ -109,6 +112,18 @@ export default function AdventureMap({ onStartTraining, onOpenStats, onOpenAlbum
 
   return (
     <div className="space-y-3 relative">
+      {loadError && (
+        <div className="p-3 rounded-xl bg-wc-danger/10 border border-wc-danger/30 text-sm hud-panel">
+          <span className="font-bold text-wc-danger">营地无法载入：</span>
+          <span className="text-wc-text-muted ml-1 break-words">{loadError}</span>
+          <button
+            onClick={() => void loadSessions()}
+            className="ml-3 text-wc-accent hover:underline"
+          >
+            重试
+          </button>
+        </div>
+      )}
       {/* ===== 顶部 HUD ===== */}
       <div className="grid grid-cols-2 gap-3">
         {/* 词汇掌握 */}

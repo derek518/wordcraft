@@ -10,6 +10,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Manager, Runtime,
 };
+use tauri_plugin_autostart::ManagerExt;
 
 pub fn build<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     let train = MenuItem::with_id(app, "train", "立即训练", true, None::<&str>)
@@ -53,8 +54,13 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
                 }
             }
             "autostart" => {
-                if let Err(e) = toggle_autostart(app) {
-                    log::warn!("切换开机自启失败: {e}");
+                match app.autolaunch().is_enabled() {
+                    Ok(currently) => {
+                        if let Err(e) = crate::commands::config::apply_autostart(app, !currently) {
+                            log::warn!("切换开机自启失败: {e}");
+                        }
+                    }
+                    Err(e) => log::warn!("读取自启状态失败: {e}"),
                 }
             }
             "quit" => app.exit(0),
@@ -74,33 +80,6 @@ fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
     let _ = win.show();
     let _ = win.unminimize();
     let _ = win.set_focus();
-}
-
-/// 今日暂停：冻结语义（决议 S8）——当日 streak 不增不减。
-fn toggle_autostart<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
-    use tauri_plugin_autostart::ManagerExt;
-
-    let manager = app.autolaunch();
-    let enabled = manager
-        .is_enabled()
-        .map_err(|e| format!("读取自启状态失败: {e}"))?;
-
-    if enabled {
-        manager
-            .disable()
-            .map_err(|e| format!("关闭自启失败: {e}"))?;
-    } else {
-        manager.enable().map_err(|e| format!("开启自启失败: {e}"))?;
-    }
-
-    // 设置与系统状态必须同步写：只改系统不改设置，重启后界面显示的开关
-    // 会和实际行为相反
-    let db = app.state::<Db>();
-    let conn = db.0.lock().map_err(|e| format!("获取数据库锁失败: {e}"))?;
-    settings::set(&conn, "autostart_enabled", if enabled { "false" } else { "true" })?;
-
-    log::info!("开机自启已{}", if enabled { "关闭" } else { "开启" });
-    Ok(())
 }
 
 fn activate_pause<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {

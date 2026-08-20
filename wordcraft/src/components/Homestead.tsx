@@ -129,8 +129,8 @@ export default function Homestead({ onBack }: HomesteadProps) {
           }
         }
       }
-    } catch {
-      // 居民刷新失败不该影响建造本身
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
     }
   }, [blueprints])
 

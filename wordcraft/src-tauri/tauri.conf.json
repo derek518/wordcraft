@@ -13,6 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
+        "label": "main",
         "title": "WordCraft",
         "width": 900,
         "height": 700,
@@ -22,6 +23,21 @@
         "resizable": true,
         "fullscreen": false,
         "decorations": true,
+        "transparent": false,
+        "theme": "Dark"
+      },
+      {
+        "label": "popup",
+        "title": "词匠",
+        "url": "index.html?mode=popup",
+        "width": 360,
+        "height": 480,
+        "visible": false,
+        "focus": false,
+        "alwaysOnTop": true,
+        "decorations": false,
+        "resizable": false,
+        "skipTaskbar": true,
         "transparent": false,
         "theme": "Dark"
       }
@@ -34,7 +50,8 @@
           "description": "Default capabilities",
           "local": true,
           "windows": [
-            "main"
+            "main",
+            "popup"
           ],
           "permissions": [
             "core:default",

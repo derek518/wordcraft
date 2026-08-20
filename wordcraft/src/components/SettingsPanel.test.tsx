@@ -16,6 +16,8 @@ const VALUES: Record<string, string> = {
 
 function stub() {
   vi.spyOn(api, 'getSetting').mockImplementation(async (k) => VALUES[k] ?? null)
+  vi.spyOn(api, 'setAutostart').mockResolvedValue(undefined)
+  vi.spyOn(api, 'exportDataJson').mockResolvedValue('{}')
   return vi.spyOn(api, 'setSetting').mockResolvedValue(undefined)
 }
 
@@ -76,8 +78,37 @@ describe('设置面板', () => {
 
     // 契约 §2.1 的键；前端写死默认值会在后端改默认时静静分叉
     const asked = get.mock.calls.map((c) => c[0])
-    for (const k of ['session_windows', 'daily_new_words', 'session_word_count', 'tts_provider']) {
+    for (const k of ['session_windows', 'daily_new_words', 'session_word_count', 'tts_provider', 'autostart_enabled']) {
       expect(asked).toContain(k)
     }
+  })
+
+  it('开机自启走 set_autostart，不只写 settings 键', async () => {
+    stub()
+    const auto = vi.spyOn(api, 'setAutostart').mockResolvedValue(undefined)
+    render(<SettingsPanel onBack={() => {}} />)
+    await settle()
+
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[aria-label="开机自启"]')!.click()
+    })
+    await settle()
+
+    expect(auto).toHaveBeenCalledWith(false)
+    expect(api.setSetting).not.toHaveBeenCalledWith('autostart_enabled', expect.anything())
+  })
+
+  it('导出按钮真正请求后端，失败时显示原因', async () => {
+    stub()
+    vi.spyOn(api, 'exportDataJson').mockRejectedValue(new Error('磁盘只读'))
+    render(<SettingsPanel onBack={() => {}} />)
+    await settle()
+
+    await act(async () => {
+      btn('导出 JSON')!.click()
+    })
+    await settle()
+
+    expect(screen.getByText(/磁盘只读/)).toBeTruthy()
   })
 })

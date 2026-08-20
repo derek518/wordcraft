@@ -377,6 +377,15 @@ export const getSetting = (key: string) => call<string | null>('get_setting', { 
 export const setSetting = (key: string, value: string) =>
   call<void>('set_setting', { key, value })
 
+export const setAutostart = (enabled: boolean) =>
+  call<void>('set_autostart', { enabled })
+
+export const exportDataJson = () => call<string>('export_data_json')
+
+export const peekPopupSession = () => call<string | null>('peek_popup_session')
+export const acceptPopup = () => call<void>('accept_popup')
+export const snoozePopup = () => call<void>('snooze_popup')
+
 // ── 平台 ──────────────────────────
 
 export const playWordAudio = (word: string) => call<void>('play_word_audio', { word })

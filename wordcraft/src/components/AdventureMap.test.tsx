@@ -109,4 +109,28 @@ describe('冒险地图', () => {
 
     expect(start).toHaveBeenCalledWith('free', 'spelling')
   })
+
+  it('加载失败显示原因而不是假装今天没有时段', async () => {
+    stub()
+    vi.spyOn(api, 'getTodaySessions').mockRejectedValue(new Error('数据库锁失败'))
+    render(<AdventureMap onStartTraining={() => {}} onOpenStats={() => {}} onOpenAlbum={() => {}}
+      onOpenHomestead={() => {}} onOpenSeason={() => {}} onOpenBoss={() => {}}
+      onOpenLibrary={() => {}} stats={STATS} />)
+    await settle()
+
+    expect(document.body.textContent).toContain('数据库锁失败')
+    expect(btn('重试')).toBeTruthy()
+  })
+
+  it('磐石秘境使用自己的元素，不套用新手村文案', async () => {
+    stub([zone('rock', '磐石秘境', true, 12, 457)])
+    render(<AdventureMap onStartTraining={() => {}} onOpenStats={() => {}} onOpenAlbum={() => {}}
+      onOpenHomestead={() => {}} onOpenSeason={() => {}} onOpenBoss={() => {}}
+      onOpenLibrary={() => {}} stats={STATS} />)
+    await settle()
+
+    expect(document.body.textContent).toContain('磐石秘境')
+    expect(document.body.textContent).toContain('高考难点词')
+    expect(document.body.textContent).not.toContain('冒险的起点')
+  })
 })

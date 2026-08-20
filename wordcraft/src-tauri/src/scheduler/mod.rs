@@ -9,8 +9,9 @@ pub use window::{next_session, parse_windows, SessionTime};
 
 use crate::db::{clock, repo::sessions, repo::settings, Db};
 use chrono::{DateTime, Timelike, Utc};
+use std::sync::Mutex;
 use std::time::Duration;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition};
 
 /// 调度轮询间隔。
 ///
@@ -47,24 +48,103 @@ pub fn get_next_session_time(app: AppHandle) -> Result<SessionTime, String> {
     compute(&app)
 }
 
-/// 立即弹出训练窗口。
+/// 立即弹出训练提示窗。不抢焦点——用户正在打字或玩游戏时，抢键盘等于产品失败。
 #[tauri::command]
 pub fn trigger_popup_now(app: AppHandle) -> Result<(), String> {
-    show_popup(&app)
+    let session_type = compute(&app).map(|n| n.session_type).unwrap_or_else(|_| "morning".into());
+    show_session_popup(&app, &session_type)
 }
 
-/// 把主窗口显示到前台。
-///
-/// 失败必须上报：弹不出来正是这个功能的唯一失效模式，
-/// 静默返回 Ok 会让「今天怎么没提醒」无从排查。
-fn show_popup(app: &AppHandle) -> Result<(), String> {
-    let win = app
+static PENDING_POPUP: Mutex<Option<String>> = Mutex::new(None);
+
+fn set_pending(session_type: &str) -> Result<(), String> {
+    *PENDING_POPUP
+        .lock()
+        .map_err(|e| format!("读取弹窗状态失败: {e}"))? = Some(session_type.to_string());
+    Ok(())
+}
+
+fn take_pending() -> Result<Option<String>, String> {
+    Ok(PENDING_POPUP
+        .lock()
+        .map_err(|e| format!("读取弹窗状态失败: {e}"))?
+        .take())
+}
+
+#[tauri::command]
+pub fn peek_popup_session() -> Result<Option<String>, String> {
+    PENDING_POPUP
+        .lock()
+        .map(|g| g.clone())
+        .map_err(|e| format!("读取弹窗状态失败: {e}"))
+}
+
+/// 用户点了「开始」：关掉提示窗，把主窗口前置（这次是用户主动点的，可以抢焦点）。
+#[tauri::command]
+pub fn accept_popup(app: AppHandle) -> Result<(), String> {
+    let session_type = take_pending()?.unwrap_or_else(|| "morning".into());
+    hide_popup(&app)?;
+    let main = app
         .get_webview_window("main")
         .ok_or_else(|| "主窗口不存在".to_string())?;
+    main.show().map_err(|e| format!("显示主窗口失败: {e}"))?;
+    main.unminimize().map_err(|e| format!("取消最小化失败: {e}"))?;
+    main.set_focus().map_err(|e| format!("主窗口聚焦失败: {e}"))?;
+    app.emit("begin-training", session_type)
+        .map_err(|e| format!("通知主窗口失败: {e}"))?;
+    Ok(())
+}
 
-    win.show().map_err(|e| format!("显示窗口失败: {e}"))?;
-    win.unminimize().map_err(|e| format!("取消最小化失败: {e}"))?;
-    win.set_focus().map_err(|e| format!("窗口聚焦失败: {e}"))?;
+/// 用户点了「稍后」：延后 15 分钟并关掉提示窗。
+#[tauri::command]
+pub fn snooze_popup(app: AppHandle) -> Result<(), String> {
+    let session_type = take_pending()?.unwrap_or_else(|| "morning".into());
+    let db = app.state::<Db>();
+    let conn = db.0.lock().map_err(|e| format!("获取数据库锁失败: {e}"))?;
+    let planned = settings::get_int(&conn, "session_word_count", 20)?;
+    let session = sessions::start(&conn, &clock::today(), &session_type, planned, &clock::now())?;
+    crate::commands::session::record_postpone(&conn, session.id)?;
+    hide_popup(&app)
+}
+
+fn hide_popup(app: &AppHandle) -> Result<(), String> {
+    let win = app
+        .get_webview_window("popup")
+        .ok_or_else(|| "提示窗不存在".to_string())?;
+    win.hide().map_err(|e| format!("隐藏提示窗失败: {e}"))?;
+    Ok(())
+}
+
+/// 弹出 360×480 无焦点提示窗。失败必须上报：弹不出来是这个功能的唯一失效模式。
+fn show_session_popup(app: &AppHandle, session_type: &str) -> Result<(), String> {
+    set_pending(session_type)?;
+    let win = app
+        .get_webview_window("popup")
+        .ok_or_else(|| "提示窗不存在".to_string())?;
+
+    if let Err(e) = place_bottom_right(&win) {
+        log::warn!("提示窗定位失败，使用默认位置: {e}");
+    }
+
+    win.show().map_err(|e| format!("显示提示窗失败: {e}"))?;
+    // 不 set_focus：spec F1 要求弹窗不抢键盘
+    Ok(())
+}
+
+fn place_bottom_right(win: &tauri::WebviewWindow) -> Result<(), String> {
+    let monitor = win
+        .primary_monitor()
+        .map_err(|e| format!("读取显示器失败: {e}"))?
+        .ok_or_else(|| "没有可用显示器".to_string())?;
+    let area = monitor.work_area();
+    let factor = monitor.scale_factor();
+    let width = (360.0 * factor) as i32;
+    let height = (480.0 * factor) as i32;
+    let margin = (16.0 * factor) as i32;
+    let x = area.position.x + area.size.width as i32 - width - margin;
+    let y = area.position.y + area.size.height as i32 - height - margin;
+    win.set_position(PhysicalPosition::new(x, y))
+        .map_err(|e| format!("设置提示窗位置失败: {e}"))?;
     Ok(())
 }
 
@@ -137,7 +217,7 @@ pub fn start_scheduler(app: AppHandle) {
             }
 
             log::info!("时段 {} 到达，弹出训练窗口", next.session_type);
-            if let Err(e) = show_popup(&app) {
+            if let Err(e) = show_session_popup(&app, &next.session_type) {
                 log::warn!("弹出训练窗口失败: {e}");
                 continue;
             }

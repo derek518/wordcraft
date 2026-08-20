@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import AdventureMap from './components/AdventureMap'
 import WordTrainer from './components/WordTrainer'
 import type { DrillMode } from './core/question'
@@ -10,6 +10,7 @@ import Homestead from './components/Homestead'
 import SeasonTrack from './components/SeasonTrack'
 import BossBattle from './components/BossBattle'
 import WordLibrary from './components/WordLibrary'
+import PopupPrompt from './components/PopupPrompt'
 import * as api from './data/api'
 import { levelProgress } from './core/progression'
 import type { OverallStats, SessionType } from './core/types'
@@ -17,7 +18,16 @@ import './index.css'
 
 type View = 'map' | 'train' | 'stats' | 'placement' | 'album' | 'settings' | 'homestead' | 'season' | 'boss' | 'library'
 
+function isPopupMode() {
+  return new URLSearchParams(window.location.search).get('mode') === 'popup'
+}
+
 export default function App() {
+  if (isPopupMode()) return <PopupPrompt />
+  return <MainApp />
+}
+
+function MainApp() {
   const [view, setView] = useState<View>('map')
   const [sessionType, setSessionType] = useState<SessionType>('morning')
   const [drillMode, setDrillMode] = useState<DrillMode>(null)
@@ -77,8 +87,8 @@ export default function App() {
       try {
         const stage = await api.getSetting('placement_stage')
         if (stage !== '2') setView('placement')
-      } catch {
-        // 读不到设置时按已完成处理
+      } catch (e) {
+        setBootError(e instanceof Error ? e.message : String(e))
       }
     })()
   }, [bootstrap, loadStats])
@@ -88,6 +98,30 @@ export default function App() {
     setDrillMode(drill)
     setView('train')
   }
+
+  const startRef = useRef(startTraining)
+  startRef.current = startTraining
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined
+    let cancelled = false
+    void (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event')
+        const un = await listen<SessionType>('begin-training', (e) => {
+          startRef.current(e.payload)
+        })
+        if (cancelled) un()
+        else unlisten = un
+      } catch {
+        // 纯浏览器 / 单测没有 Tauri 事件总线，不是后端失败
+      }
+    })()
+    return () => {
+      cancelled = true
+      unlisten?.()
+    }
+  }, [])
 
   const finishTraining = () => {
     setView('map')

@@ -264,8 +264,12 @@ export_data_json() -> Result<String, String>                       // spec F7 �
 
 ```rust
 get_next_session_time() -> Result<SessionTime, String>   // 真实计算，禁止硬编码
+/// 弹出 360×480 无焦点提示窗（右下角、alwaysOnTop）。不得对主窗口 set_focus。
 trigger_popup_now() -> Result<(), String>
-set_autostart(enabled: bool) -> Result<(), String>
+peek_popup_session() -> Result<Option<String>, String>
+accept_popup() -> Result<(), String>                     // 关掉提示窗，主窗口前置并开始该时段
+snooze_popup() -> Result<(), String>                     // 延后 15 分钟并关掉提示窗
+set_autostart(enabled: bool) -> Result<(), String>       // 同步系统自启与 settings.autostart_enabled
 get_user_busy_state() -> Result<BusyState, String>       // Windows: SHQueryUserNotificationState
 play_word_audio(word: String) -> Result<(), String>      // 缓存未命中时先合成再播
 prefetch_audio(words: Vec<String>) -> Result<i64, String>

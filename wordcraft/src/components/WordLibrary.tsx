@@ -47,8 +47,8 @@ export default function WordLibrary({ onBack }: WordLibraryProps) {
         const [z, stats] = await Promise.all([api.getZoneProgress(), api.getOverallStats()])
         setZones(z)
         setTotal(stats.total_words)
-      } catch {
-        // 区域筛选拿不到时退化为纯搜索，不阻断主功能
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
       }
     })()
   }, [])
@@ -136,7 +136,7 @@ export default function WordLibrary({ onBack }: WordLibraryProps) {
 
       {error && (
         <div className="p-3 rounded-xl bg-wc-danger/10 border border-wc-danger/30 text-sm mb-4">
-          <span className="font-bold text-wc-danger">搜索失败：</span>
+          <span className="font-bold text-wc-danger">请求失败：</span>
           <span className="text-wc-text-muted ml-1 break-words">{error}</span>
         </div>
       )}

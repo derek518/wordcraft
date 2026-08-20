@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import * as api from '../data/api'
-import { gradeAnswer } from '../core/fsrs'
+import { gradeAnswer, itemAfterGrade } from '../core/fsrs'
 import { xpFor } from '../core/progression'
 import { playCorrect, playIncorrect, playSessionComplete, setSoundEnabled } from '../core/sound'
 import { buildQuestion, checkSpelling, drillLevel, type DrillMode, type Question } from '../core/question'
@@ -43,6 +43,16 @@ function crystalForBand(band: number, state: 'bright' | 'faint' | 'dim' = 'brigh
 
 type Phase = 'loading' | 'error' | 'answering' | 'complete'
 
+/** 与后端 `MAX_POSTPONE` 对齐。自由练习不走弹出调度，也不显示「稍后」。 */
+const MAX_POSTPONE = 3
+
+function optionIndexFromKey(key: string): number | null {
+  if (key >= '1' && key <= '4') return Number(key) - 1
+  const letter = key.toLowerCase()
+  if (letter >= 'a' && letter <= 'd') return letter.charCodeAt(0) - 97
+  return null
+}
+
 export default function WordTrainer({ sessionType, drillMode = null, onFinish }: WordTrainerProps) {
   // 专项模式下显示专项名——用户主动选了「听写」，标题却写「自由探险」会让人以为选错了
   const title = drillMode ? DRILL_NAMES[drillMode] : SESSION_NAMES[sessionType]
@@ -65,6 +75,9 @@ export default function WordTrainer({ sessionType, drillMode = null, onFinish }:
   const [answeredCount, setAnsweredCount] = useState(0)
   const [xpFloat, setXpFloat] = useState<{ xp: number; x: number; y: number } | null>(null)
   const [audioError, setAudioError] = useState('')
+  const [awaitingPrompt, setAwaitingPrompt] = useState(false)
+  const [commitReady, setCommitReady] = useState(true)
+  const [postponeMessage, setPostponeMessage] = useState('')
 
   /** 粒子爆炸状态 */
   const [particles, setParticles] = useState<{ id: number; x: number; y: number; color: string; tx: number; ty: number }[]>([])
@@ -74,6 +87,7 @@ export default function WordTrainer({ sessionType, drillMode = null, onFinish }:
   /** 结算是否已在进行中。用 ref 而非 state：state 更新是异步的，
    *  在它生效前重复点击仍会穿透。 */
   const finishing = useRef(false)
+  const postponing = useRef(false)
   const startedAt = useRef(0)
   const cardRef = useRef<HTMLDivElement>(null)
 
@@ -99,14 +113,25 @@ export default function WordTrainer({ sessionType, drillMode = null, onFinish }:
   }, [])
 
   const prepareQuestion = useCallback(async (item: QueueItem) => {
-    const level = drillLevel(drillMode, item, audioAvailable.current)
-    const distractors = level >= 5 ? [] : await api.getDistractorPool(item.word_id, level, 3)
-    setQuestion(buildQuestion({ item, level, distractors }))
-    setSpellInput('')
-    if (level === 3) {
-      void api.playWordAudio(item.word).catch(() => {})
+    setAwaitingPrompt(true)
+    try {
+      const level = drillLevel(drillMode, item, audioAvailable.current)
+      const distractors = level >= 5 ? [] : await api.getDistractorPool(item.word_id, level, 3)
+      setQuestion(buildQuestion({ item, level, distractors }))
+      setSpellInput('')
+      setAudioError('')
+      // Lv.3 从音频结束起算（contracts §5）。播放失败仍开始计时，但把原因亮出来。
+      if (level === 3) {
+        try {
+          await api.playWordAudio(item.word)
+        } catch (e) {
+          setAudioError(e instanceof Error ? e.message : String(e))
+        }
+      }
+    } finally {
+      startedAt.current = Date.now()
+      setAwaitingPrompt(false)
     }
-    startedAt.current = Date.now()
   }, [drillMode])
 
   const load = useCallback(async () => {
@@ -142,9 +167,10 @@ export default function WordTrainer({ sessionType, drillMode = null, onFinish }:
   }, [load])
 
   const submitAnswer = async (input: string) => {
-    if (isRevealed || !current || !question) return
+    if (isRevealed || awaitingPrompt || !current || !question) return
 
-    const reactionMs = Date.now() - startedAt.current
+    const now = new Date()
+    const reactionMs = now.getTime() - startedAt.current
     const correct =
       question.type >= 5 ? checkSpelling(input, question.answer) : input === question.answer
 
@@ -173,6 +199,7 @@ export default function WordTrainer({ sessionType, drillMode = null, onFinish }:
       isCorrect: correct,
       reactionMs,
       sessionId,
+      now,
     })
 
     const gained = xpFor(dto.rating, correct ? combo : 0)
@@ -188,18 +215,22 @@ export default function WordTrainer({ sessionType, drillMode = null, onFinish }:
       setTimeout(() => setXpFloat(null), 1200)
     }
 
+    setCommitReady(false)
     try {
       await api.commitReview(dto)
       if (requeueInSession) {
-        setQueue((q) => [...q, { ...current, app_state: dto.appState, reinforce_streak: dto.reinforceStreak }])
+        setQueue((q) => [...q, itemAfterGrade(current, dto, now)])
       }
     } catch (e) {
       setErrorMessage(e instanceof Error ? e.message : String(e))
       setPhase('error')
+    } finally {
+      setCommitReady(true)
     }
   }
 
   const handleNext = async () => {
+    if (!commitReady) return
     setSelected(null)
     setIsRevealed(false)
     setIsCorrect(false)
@@ -234,6 +265,18 @@ export default function WordTrainer({ sessionType, drillMode = null, onFinish }:
     }
   }
 
+  const handlePostpone = async () => {
+    if (sessionType === 'free' || sessionId === null || postponing.current) return
+    postponing.current = true
+    try {
+      await api.postponeSession(sessionId)
+      onFinish()
+    } catch (e) {
+      setPostponeMessage(e instanceof Error ? e.message : String(e))
+      postponing.current = false
+    }
+  }
+
   const handlePlayAudio = async () => {
     if (!current) return
     try {
@@ -243,6 +286,29 @@ export default function WordTrainer({ sessionType, drillMode = null, onFinish }:
       setAudioError(e instanceof Error ? e.message : String(e))
     }
   }
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (phase !== 'answering' || !question || e.repeat) return
+      if (isRevealed) {
+        if ((e.key === ' ' || e.key === 'Enter') && commitReady) {
+          e.preventDefault()
+          void handleNext()
+        }
+        return
+      }
+      // 拼写框里空格是输入，不能抢走
+      if (question.type >= 5 || awaitingPrompt) return
+      const idx = optionIndexFromKey(e.key)
+      if (idx === null) return
+      const option = question.options[idx]
+      if (!option) return
+      e.preventDefault()
+      void submitAnswer(option)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
 
   const colors = SESSION_COLORS[sessionType]
   const progress = queue.length > 0 ? (cursor / queue.length) * 100 : 0
@@ -363,12 +429,23 @@ export default function WordTrainer({ sessionType, drillMode = null, onFinish }:
 
       {/* 顶部 HUD */}
       <div className="flex items-center justify-between mb-5">
-        <button
-          onClick={onFinish}
-          className="text-sm text-wc-text-muted hover:text-wc-text transition flex items-center gap-1"
-        >
-          <span>←</span> 返回
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onFinish}
+            className="text-sm text-wc-text-muted hover:text-wc-text transition flex items-center gap-1"
+          >
+            <span>←</span> 返回
+          </button>
+          {sessionType !== 'free' && (
+            <button
+              onClick={() => void handlePostpone()}
+              title={`本时段最多延后 ${MAX_POSTPONE} 次`}
+              className="text-sm text-wc-text-muted hover:text-wc-text transition"
+            >
+              稍后
+            </button>
+          )}
+        </div>
 
         <div className="flex items-center gap-2">
           {/* 传送门标识 */}
@@ -389,6 +466,10 @@ export default function WordTrainer({ sessionType, drillMode = null, onFinish }:
           <span className="text-wc-text-muted">/{queue.length}</span>
         </div>
       </div>
+
+      {postponeMessage && (
+        <p className="text-xs text-wc-warning mb-3 break-words">{postponeMessage}</p>
+      )}
 
       {/* 进度条 */}
       <div className="h-2 bg-wc-bg-2 rounded-full mb-5 overflow-hidden border border-wc-border/30">
@@ -574,7 +655,7 @@ export default function WordTrainer({ sessionType, drillMode = null, onFinish }:
             type="text"
             value={spellInput}
             onChange={(e) => setSpellInput(e.target.value)}
-            disabled={isRevealed}
+            disabled={isRevealed || awaitingPrompt}
             autoFocus
             autoCapitalize="off"
             autoCorrect="off"
@@ -591,7 +672,7 @@ export default function WordTrainer({ sessionType, drillMode = null, onFinish }:
           {!isRevealed && (
             <button
               type="submit"
-              disabled={!spellInput.trim()}
+              disabled={!spellInput.trim() || awaitingPrompt}
               className="w-full mt-3 py-3 bg-gradient-to-r from-wc-primary to-wc-primary-bright rounded-xl font-bold hover:opacity-90 transition disabled:opacity-40 disabled:cursor-not-allowed btn-game"
             >
               确认
@@ -620,7 +701,7 @@ export default function WordTrainer({ sessionType, drillMode = null, onFinish }:
               <button
                 key={`${option}-${i}`}
                 onClick={() => submitAnswer(option)}
-                disabled={isRevealed}
+                disabled={isRevealed || awaitingPrompt}
                 className={`p-4 rounded-xl border text-sm font-medium transition-all btn-game ${btnClass} ${
                   isRevealed ? 'cursor-default' : 'cursor-pointer'
                 }`}
@@ -640,8 +721,9 @@ export default function WordTrainer({ sessionType, drillMode = null, onFinish }:
       {isRevealed && (
         <div className="text-center pop-in-bounce">
           <button
-            onClick={handleNext}
-            className="px-10 py-3 bg-gradient-to-r from-wc-primary to-wc-primary-bright rounded-xl font-bold hover:opacity-90 transition btn-game"
+            onClick={() => void handleNext()}
+            disabled={!commitReady}
+            className="px-10 py-3 bg-gradient-to-r from-wc-primary to-wc-primary-bright rounded-xl font-bold hover:opacity-90 transition btn-game disabled:opacity-40 disabled:cursor-not-allowed"
             style={{ boxShadow: `0 0 20px rgba(124, 58, 237, 0.3)` }}
           >
             {cursor < queue.length - 1 ? '下一个水晶 →' : '完成冒险！'}

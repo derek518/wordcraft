@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, act, cleanup } from '@testing-library/react'
+import { render, screen, act, cleanup, fireEvent } from '@testing-library/react'
 import WordTrainer from './WordTrainer'
 import * as api from '../data/api'
 import type { QueueItem } from '../core/types'
@@ -37,6 +37,7 @@ function word(over: Partial<QueueItem> = {}): QueueItem {
     lapses: 0,
     question_level: 1,
     reinforce_streak: 0,
+    last_review_at: null,
     frequency_band: 1,
     source: 'due_review',
     ...over,
@@ -55,6 +56,7 @@ function stub(queue: QueueItem[]) {
   vi.spyOn(api, 'getDistractorPool').mockResolvedValue(['放弃', '收集', '建造'])
   vi.spyOn(api, 'commitReview').mockResolvedValue(undefined)
   vi.spyOn(api, 'playWordAudio').mockResolvedValue(undefined)
+  vi.spyOn(api, 'postponeSession').mockResolvedValue({ remaining: 2 })
   return vi.spyOn(api, 'finishSession').mockResolvedValue({
     completed_count: 1,
     xp_earned: 10,
@@ -194,5 +196,95 @@ describe('训练主循环', () => {
     expect(screen.getByText(/词库还没有可练习的词/)).toBeTruthy()
     // 空队列不该也不能开一个会话
     expect(api.startSession).not.toHaveBeenCalled()
+  })
+
+  it('数字键与字母键可以选题', async () => {
+    stub([word()])
+    const commit = vi.spyOn(api, 'commitReview').mockResolvedValue(undefined)
+    render(<WordTrainer sessionType="morning" onFinish={() => {}} />)
+    await settle()
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: '1' })
+    })
+    await settle()
+    expect(commit).toHaveBeenCalledTimes(1)
+  })
+
+  it('揭晓后回车会结算，不会停在当前题', async () => {
+    const finish = stub([word()])
+    render(<WordTrainer sessionType="morning" onFinish={() => {}} />)
+    await settle()
+
+    await act(async () => {
+      byText('申请，应用')!.click()
+    })
+    await settle()
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 'Enter' })
+    })
+    await settle()
+    expect(finish).toHaveBeenCalledTimes(1)
+  })
+
+  it('稍后会延后本场并离开训练页', async () => {
+    stub([word()])
+    const onFinish = vi.fn()
+    render(<WordTrainer sessionType="morning" onFinish={onFinish} />)
+    await settle()
+
+    await act(async () => {
+      byText('稍后')!.click()
+    })
+    await settle()
+
+    expect(api.postponeSession).toHaveBeenCalledWith(7)
+    expect(onFinish).toHaveBeenCalledTimes(1)
+  })
+
+  it('自由练习不显示稍后', async () => {
+    stub([word()])
+    render(<WordTrainer sessionType="free" onFinish={() => {}} />)
+    await settle()
+    expect(byText('稍后')).toBeUndefined()
+  })
+
+  it('延后达到上限时留在训练页并显示原因', async () => {
+    stub([word()])
+    vi.spyOn(api, 'postponeSession').mockRejectedValue(new Error('本时段已延后 3 次，不能再延后'))
+    const onFinish = vi.fn()
+    render(<WordTrainer sessionType="morning" onFinish={onFinish} />)
+    await settle()
+
+    await act(async () => {
+      byText('稍后')!.click()
+    })
+    await settle()
+
+    expect(screen.getByText(/已延后 3 次/)).toBeTruthy()
+    expect(onFinish).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('Lv.')
+  })
+
+  it('听音题等音频结束后才离开加载态', async () => {
+    let release!: () => void
+    stub([word({ question_level: 3 })])
+    vi.spyOn(api, 'playWordAudio').mockReturnValue(
+      new Promise((res) => {
+        release = () => res(undefined)
+      }),
+    )
+
+    render(<WordTrainer sessionType="morning" onFinish={() => {}} />)
+    await settle()
+    expect(document.body.textContent).toContain('正在召唤水晶')
+
+    await act(async () => {
+      release()
+      await Promise.resolve()
+    })
+    await settle()
+    expect(document.body.textContent).toContain('Lv.3')
   })
 })

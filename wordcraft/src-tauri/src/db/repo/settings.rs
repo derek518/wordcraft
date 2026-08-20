@@ -2,6 +2,11 @@
 
 use rusqlite::{Connection, OptionalExtension};
 
+/// 延后到期时刻。与 `postpone_session_type` 成对出现。
+pub const POSTPONE_UNTIL: &str = "postpone_until";
+/// 正在延后的时段类型。
+pub const POSTPONE_TYPE: &str = "postpone_session_type";
+
 pub fn get(conn: &Connection, key: &str) -> Result<Option<String>, String> {
     conn.query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| {
         r.get(0)

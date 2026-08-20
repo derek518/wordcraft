@@ -40,6 +40,8 @@ export interface QueueItem {
   lapses: number
   question_level: QuestionType
   reinforce_streak: number
+  /** 上次作答时刻。新词为 null。还原 FSRS Card 时必须带上，否则间隔会偏短 */
+  last_review_at: string | null
   source: QueueSource
 }
 

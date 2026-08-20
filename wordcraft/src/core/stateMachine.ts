@@ -90,6 +90,17 @@ export function transition(input: TransitionInput): TransitionResult {
     }
   }
 
+  // 新词无论快慢，第一次答对只进入 learning，题型保持 Lv.1（contracts §4）。
+  // 直接跳到 review 会让「学习中」桶只剩下摸底预分级的词，统计失真。
+  if (appState === 'new') {
+    return {
+      appState: 'learning',
+      questionLevel: 1,
+      reinforceStreak: 0,
+      requeueInSession: false,
+    }
+  }
+
   // 达到掌握门槛：稳定性足够且刚通过高阶题型
   const nextLevel = clampLevel(questionLevel + 1)
   if (
@@ -104,8 +115,7 @@ export function transition(input: TransitionInput): TransitionResult {
     }
   }
 
-  // new / learning / review / mastered 答对后统一进入 review
-  // （mastered 词答对属于低频抽查通过，维持已掌握）
+  // learning / review 答对进入 review；mastered 抽查通过维持已掌握
   return {
     appState: appState === 'mastered' ? 'mastered' : 'review',
     questionLevel: nextLevel,

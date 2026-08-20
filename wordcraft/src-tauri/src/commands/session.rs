@@ -3,7 +3,7 @@
 //! 注意 `settle_day` 的 streak 判定（contracts §7.1）不在此处——那需要
 //! progression 逻辑，属 T14。本模块只负责会话与每日记录的数据操作。
 
-use crate::db::{clock, repo::sessions, Db};
+use crate::db::{clock, repo::sessions, repo::settings, Db};
 use rusqlite::Connection;
 use serde::Serialize;
 use tauri::State;
@@ -111,12 +111,27 @@ pub fn get_today_sessions(db: State<Db>) -> Result<Vec<sessions::Session>, Strin
     sessions::for_date(&conn, &clock::today())
 }
 
+/// 延后时长。契约 §3.3：点「稍后」后 15 分钟内不重复弹出；出窗口则并入下一时段。
+const POSTPONE_MINUTES: i64 = 15;
+
+fn record_postpone(conn: &Connection, session_id: i64) -> Result<PostponeResult, String> {
+    let remaining = sessions::postpone(conn, session_id)?;
+    let session = sessions::find_by_id(conn, session_id)?
+        .ok_or_else(|| format!("会话 {session_id} 不存在"))?;
+    // 自由练习不是弹出时段，没有「过 15 分钟再响」这件事
+    if session.session_type != "free" {
+        let until = clock::parse_ts(&clock::now())? + chrono::Duration::minutes(POSTPONE_MINUTES);
+        settings::set(conn, settings::POSTPONE_UNTIL, &clock::format_ts(until))?;
+        settings::set(conn, settings::POSTPONE_TYPE, &session.session_type)?;
+    }
+    Ok(PostponeResult { remaining })
+}
+
 /// 延后 15 分钟。达到 spec F1 的 3 次上限后返回 Err。
 #[tauri::command]
 pub fn postpone_session(db: State<Db>, session_id: i64) -> Result<PostponeResult, String> {
     let conn = lock(&db)?;
-    let remaining = sessions::postpone(&conn, session_id)?;
-    Ok(PostponeResult { remaining })
+    record_postpone(&conn, session_id)
 }
 
 /// 标记某时段「确实弹出过」。
@@ -175,5 +190,50 @@ mod tests {
     fn 错误消息列出合法取值() {
         let err = check_session_type("night").unwrap_err();
         assert!(err.contains("morning"), "错误消息应列出合法值: {err}");
+    }
+
+    #[test]
+    fn 时段延后写入十五分钟后的到期时刻() {
+        use crate::db::migrations;
+        use crate::test_support::in_memory_db;
+
+        let mut conn = in_memory_db();
+        migrations::run(&mut conn).unwrap();
+        let s = sessions::start(&conn, &clock::today(), "morning", 5, &clock::now()).unwrap();
+
+        let before = clock::parse_ts(&clock::now()).unwrap();
+        let remaining = record_postpone(&conn, s.id).unwrap().remaining;
+        assert_eq!(remaining, 2);
+
+        let until = settings::get(&conn, settings::POSTPONE_UNTIL)
+            .unwrap()
+            .expect("应写入 postpone_until");
+        let until_ts = clock::parse_ts(&until).unwrap();
+        let delta = until_ts - before;
+        assert!(
+            delta >= chrono::Duration::minutes(14) && delta <= chrono::Duration::minutes(16),
+            "延后窗口应为 15 分钟，实际 {delta:?}"
+        );
+        assert_eq!(
+            settings::get(&conn, settings::POSTPONE_TYPE).unwrap().as_deref(),
+            Some("morning")
+        );
+    }
+
+    #[test]
+    fn 自由练习延后不写调度标记() {
+        use crate::db::migrations;
+        use crate::test_support::in_memory_db;
+
+        let mut conn = in_memory_db();
+        migrations::run(&mut conn).unwrap();
+        let s = sessions::start(&conn, &clock::today(), "free", 5, &clock::now()).unwrap();
+        record_postpone(&conn, s.id).unwrap();
+
+        let until = settings::get(&conn, settings::POSTPONE_UNTIL).unwrap();
+        assert!(
+            until.as_deref().unwrap_or("").is_empty(),
+            "自由练习不是弹出时段，不应写入 postpone_until，实际 {until:?}"
+        );
     }
 }

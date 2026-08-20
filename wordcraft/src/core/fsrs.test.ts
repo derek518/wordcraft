@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { gradeAnswer, toCard } from './fsrs'
+import { gradeAnswer, itemAfterGrade, toCard } from './fsrs'
 import type { QueueItem } from './types'
 
 function newWord(overrides: Partial<QueueItem> = {}): QueueItem {
@@ -21,6 +21,7 @@ function newWord(overrides: Partial<QueueItem> = {}): QueueItem {
     lapses: 0,
     question_level: 1,
     reinforce_streak: 0,
+    last_review_at: null,
     source: 'new',
     ...overrides,
   }
@@ -51,6 +52,57 @@ describe('Card 还原', () => {
     expect(card.stability).toBeCloseTo(12.5)
     expect(card.difficulty).toBeCloseTo(6.2)
     expect(card.state).toBe(2)
+  })
+
+  it('还原已学词时写入 last_review 与 elapsed_days', () => {
+    const now = new Date('2026-08-20T10:00:00Z')
+    const card = toCard(
+      newWord({
+        reps: 3,
+        lapses: 1,
+        stability: 12.5,
+        difficulty: 6.2,
+        fsrs_state: 2,
+        app_state: 'review',
+        last_review_at: '2026-08-10T10:00:00Z',
+        due_at: '2026-08-18T10:00:00Z',
+      }),
+      now,
+    )
+    expect(card.last_review?.toISOString().startsWith('2026-08-10T10:00:00')).toBe(true)
+    expect(card.elapsed_days).toBe(10)
+    expect(card.scheduled_days).toBe(8)
+  })
+
+  it('缺少 last_review_at 时 elapsed_days 退回 0，不能把逾期词当成刚复习过', () => {
+    const now = new Date('2026-08-20T10:00:00Z')
+    const overdue = toCard(
+      newWord({
+        reps: 3,
+        stability: 12,
+        difficulty: 6,
+        fsrs_state: 2,
+        app_state: 'review',
+        last_review_at: '2026-08-01T10:00:00Z',
+        due_at: '2026-08-10T10:00:00Z',
+      }),
+      now,
+    )
+    const missing = toCard(
+      newWord({
+        reps: 3,
+        stability: 12,
+        difficulty: 6,
+        fsrs_state: 2,
+        app_state: 'review',
+        last_review_at: null,
+        due_at: '2026-08-10T10:00:00Z',
+      }),
+      now,
+    )
+    expect(overdue.elapsed_days).toBe(19)
+    expect(missing.elapsed_days).toBe(0)
+    expect(overdue.elapsed_days).toBeGreaterThan(missing.elapsed_days)
   })
 })
 
@@ -273,6 +325,56 @@ describe('完整评分流程', () => {
     })
     expect(dto.appState).toBe('review')
     expect(dto.reinforceStreak).toBe(0)
+  })
+
+  it('新词答对进入 learning 而非直接 review', () => {
+    const { dto } = gradeAnswer({
+      item: newWord(),
+      questionType: 1,
+      isCorrect: true,
+      reactionMs: 2000,
+      sessionId: null,
+    })
+    expect(dto.appState).toBe('learning')
+    expect(dto.questionLevel).toBe(1)
+  })
+
+  it('当场重考拷完整评分后状态，不只改 app_state', () => {
+    const now = new Date('2026-08-20T10:00:00Z')
+    const item = newWord({
+      app_state: 'review',
+      fsrs_state: 2,
+      reps: 4,
+      lapses: 0,
+      stability: 20,
+      difficulty: 5,
+      question_level: 3,
+      due_at: '2026-08-18T00:00:00Z',
+      last_review_at: '2026-08-10T00:00:00Z',
+      source: 'due_review',
+    })
+    const { dto, requeueInSession } = gradeAnswer({
+      item,
+      questionType: 3,
+      isCorrect: false,
+      reactionMs: 9000,
+      sessionId: 7,
+      now,
+    })
+    expect(requeueInSession).toBe(true)
+
+    const next = itemAfterGrade(item, dto, now)
+    expect(next.app_state).toBe('reinforcing')
+    expect(next.question_level).toBe(dto.questionLevel)
+    expect(next.reinforce_streak).toBe(0)
+    expect(next.reps).toBe(dto.after.reps)
+    expect(next.lapses).toBe(dto.after.lapses)
+    expect(next.stability).toBe(dto.after.stability)
+    expect(next.difficulty).toBe(dto.after.difficulty)
+    expect(next.due_at).toBe(dto.after.dueAt)
+    expect(next.fsrs_state).toBe(dto.after.fsrsState)
+    expect(next.last_review_at).toBe('2026-08-20T10:00:00Z')
+    expect(next.source).toBe('reinforcing')
   })
 
   it('所有数值字段非负，满足后端校验', () => {

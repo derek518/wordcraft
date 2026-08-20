@@ -78,14 +78,20 @@ describe('强化队列离队（决议 S3）', () => {
 })
 
 describe('正常晋级', () => {
-  it.each(['new', 'learning', 'review'] as AppState[])(
+  it('new 答对进入 learning，题型保持 Lv.1', () => {
+    const r = input({ appState: 'new', questionLevel: 1 })
+    expect(r.appState).toBe('learning')
+    expect(r.questionLevel).toBe(1)
+  })
+
+  it.each(['learning', 'review'] as AppState[])(
     '%s 答对后进入 review',
     (appState) => {
       expect(input({ appState }).appState).toBe('review')
     },
   )
 
-  it('答对提升题型等级，封顶 Lv.5', () => {
+  it('learning / review 答对提升题型等级，封顶 Lv.5', () => {
     expect(input({ questionLevel: 1 }).questionLevel).toBe(2)
     expect(input({ questionLevel: 5 }).questionLevel).toBe(5)
   })

@@ -32,6 +32,10 @@ const scheduler = fsrs(
  */
 const FALLBACK_DIFFICULTY = 5
 
+function daysBetween(from: Date, to: Date): number {
+  return Math.max(0, (to.getTime() - from.getTime()) / ONE_DAY_MS)
+}
+
 /** 把队列项还原成 ts-fsrs 的 Card。新词返回空卡。 */
 export function toCard(item: QueueItem, now: Date = new Date()): Card {
   if (item.reps === 0 && item.app_state === 'new') {
@@ -41,17 +45,22 @@ export function toCard(item: QueueItem, now: Date = new Date()): Card {
   const difficulty =
     item.stability > 0 && item.difficulty <= 0 ? FALLBACK_DIFFICULTY : item.difficulty
 
+  const lastReview = item.last_review_at ? new Date(item.last_review_at) : undefined
+  const elapsed = lastReview ? daysBetween(lastReview, now) : 0
+  const due = item.due_at ? new Date(item.due_at) : now
+  const scheduled = lastReview ? daysBetween(lastReview, due) : 0
+
   return {
-    due: item.due_at ? new Date(item.due_at) : now,
+    due,
     stability: item.stability,
     difficulty,
-    elapsed_days: 0,
-    scheduled_days: 0,
+    elapsed_days: elapsed,
+    scheduled_days: scheduled,
     learning_steps: 0,
     reps: item.reps,
     lapses: item.lapses,
     state: item.fsrs_state,
-    last_review: undefined,
+    last_review: lastReview,
   }
 }
 
@@ -141,5 +150,26 @@ export function gradeAnswer(input: GradeInput): GradeOutput {
       questionLevel: state.questionLevel,
       reinforceStreak: state.reinforceStreak,
     },
+  }
+}
+
+/**
+ * 把一次评分结果写回队列项。当场重考必须用这份新状态——
+ * 只改 app_state 会让同一场里再出降级前的题型，FSRS 也会用旧卡再算一遍。
+ */
+export function itemAfterGrade(item: QueueItem, dto: ReviewCommitDto, now: Date): QueueItem {
+  return {
+    ...item,
+    difficulty: dto.after.difficulty,
+    stability: dto.after.stability,
+    due_at: dto.after.dueAt,
+    fsrs_state: dto.after.fsrsState,
+    reps: dto.after.reps,
+    lapses: dto.after.lapses,
+    app_state: dto.appState,
+    question_level: dto.questionLevel,
+    reinforce_streak: dto.reinforceStreak,
+    last_review_at: toIsoUtc(now),
+    source: dto.appState === 'reinforcing' ? 'reinforcing' : item.source,
   }
 }

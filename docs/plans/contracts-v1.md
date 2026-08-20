@@ -156,6 +156,8 @@ CREATE TABLE settings (
 | `autostart_enabled` | `"true"` | |
 | `tts_provider` | `"edge"` | `edge` \| `sapi` \| `off` |
 | `season_milestone_seen` | `"0"` | 已庆祝过的最高赛道里程碑（时段数）。庆祝在**跨过的那一刻放一次**，靠这个键保证不会每次打开赛道页都重放 |
+| `postpone_until` | `""` | 延后到期时刻（UTC ISO8601）。空串表示当前没有延后。调度器在此之前不重复弹出同一时段 |
+| `postpone_session_type` | `""` | 正在延后的时段 `morning`/`noon`/`evening` |
 
 ---
 
@@ -301,8 +303,8 @@ pub enum BusyState { Normal, FullScreenD3D, Busy, Presentation, Unknown }
 
 | 当前 | 事件 | 目标 | 副作用 |
 |---|---|---|---|
-| `new` | 任意作答 | `learning` | `question_level = 1` |
-| 任意 | 答错 | `reinforcing` | `reinforce_streak = 0`；当场排入本 session 队尾；`question_level` 降 1（最低 1） |
+| `new` | 答对 | `learning` | `question_level = 1`（不得直接跳到 `review`） |
+| 任意 | 答错 | `reinforcing` | **优先于上一行**：`reinforce_streak = 0`；当场排入本 session 队尾；`question_level` 降 1（最低 1） |
 | `reinforcing` | 答对且 `reaction_ms < 8000` | `reinforce_streak += 1`；**达 2 → `review`** | 未达 2 保持 `reinforcing`（决议 S3） |
 | `reinforcing` | 答对但 `reaction_ms >= 8000` | 保持 | `reinforce_streak = 0`（重新计数） |
 | `learning` | 答对 | `review` | `question_level += 1`（封顶 5） |
@@ -391,6 +393,9 @@ else                                  -> Hard(2)
 
 **Lv.5 准入限制（决议 S10）**：拼写题仅对 `frequency_band` 1–2 的核心词启用；其余词最高阶止于 Lv.4。
 故 `QueueItem` 必须携带 `frequency_band`——前端据此判定题型上限。
+`QueueItem` 同时携带 `last_review_at`（可空）。前端还原 ts-fsrs Card 时必须写入
+`last_review` 与 `elapsed_days`，禁止把已学词当成「刚复习过」（elapsed_days=0），
+否则逾期词的可提取度被高估、间隔系统性偏短。
 
 **Lv.3 的音频前置**：听音辨词依赖 TTS。发音未接入前（MOCKS M2）该级降为 Lv.2，
 否则用户面对的是无声题面，只能盲猜。降级逻辑在 `src/core/question.ts::effectiveLevel`。

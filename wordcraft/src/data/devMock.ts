@@ -234,6 +234,7 @@ const HANDLERS: Record<string, (args?: Record<string, unknown>) => unknown> = {
 
   search_words: () => [],
   play_word_audio: () => null,
+  postpone_session: () => ({ remaining: 2 }),
   set_setting: () => null,
   mark_cards_seen: () => null,
   redeem_points: () => null,

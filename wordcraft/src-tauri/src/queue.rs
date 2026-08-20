@@ -97,13 +97,15 @@ pub struct QueueItem {
     pub lapses: i64,
     pub question_level: i64,
     pub reinforce_streak: i64,
+    /// 上次作答时刻。新词为 None。前端还原 FSRS Card 必须带上。
+    pub last_review_at: Option<String>,
     pub source: QueueSource,
 }
 
 const WORD_COLS: &str = "w.id, w.word, w.phonetic, w.pos, w.meaning, w.example_1, w.example_2, \
                           w.frequency_band";
 const STATE_COLS: &str = "s.difficulty, s.stability, s.due_at, s.fsrs_state, s.app_state, \
-                          s.reps, s.lapses, s.question_level, s.reinforce_streak";
+                          s.reps, s.lapses, s.question_level, s.reinforce_streak, s.last_review_at";
 
 /// 按列名而非位置读取。
 ///
@@ -129,6 +131,7 @@ fn row_to_item(row: &Row, source: QueueSource) -> rusqlite::Result<QueueItem> {
         lapses: row.get("lapses")?,
         question_level: row.get("question_level")?,
         reinforce_streak: row.get("reinforce_streak")?,
+        last_review_at: row.get("last_review_at")?,
         source,
     })
 }
@@ -194,6 +197,7 @@ fn take_new_words(conn: &Connection, limit: i64) -> Result<Vec<QueueItem>, Strin
                 lapses: 0,
                 question_level: 1,
                 reinforce_streak: 0,
+                last_review_at: None,
                 source: QueueSource::New,
             })
         })
@@ -599,6 +603,38 @@ mod tests {
         );
     }
 
+    #[test]
+    fn 到期复习项带回上次复习时刻() {
+        let conn = seed(5);
+        let last = "2026-08-01T00:00:00Z";
+        word_states::upsert(
+            &conn,
+            &word_states::WordState {
+                word_id: 1,
+                difficulty: 5.0,
+                stability: 12.0,
+                due_at: past(),
+                fsrs_state: 2,
+                app_state: "review".into(),
+                reps: 3,
+                lapses: 0,
+                question_level: 2,
+                reinforce_streak: 0,
+                last_review_at: Some(last.into()),
+                mastered_at: None,
+            },
+        )
+        .unwrap();
+
+        let q = build(&conn, "morning", 5).unwrap();
+        let item = q.iter().find(|i| i.word_id == 1).expect("到期复习词应在队列中");
+        assert_eq!(
+            item.last_review_at.as_deref(),
+            Some(last),
+            "前端还原 Card 必须带上 last_review，否则 elapsed_days 恒为 0"
+        );
+    }
+
     // ── 时段合并（spec F1） ──────────────────────────
 
     #[test]
@@ -743,6 +779,12 @@ mod tests {
                 s.reinforce_streak = 0;
                 s.due_at = clock::due_in_days(1.0);
             }
+        } else if s.app_state == "new" {
+            // 与 stateMachine.ts 对齐：首次答对进入 learning，题型保持 1
+            s.app_state = "learning".into();
+            s.question_level = 1;
+            s.stability = grow_stability(s.stability);
+            s.due_at = clock::due_in_days(s.stability);
         } else {
             s.stability = grow_stability(s.stability);
             s.question_level = (s.question_level + 1).min(5);

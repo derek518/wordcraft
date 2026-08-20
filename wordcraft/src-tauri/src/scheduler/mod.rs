@@ -8,7 +8,7 @@ mod window;
 pub use window::{next_session, parse_windows, SessionTime};
 
 use crate::db::{clock, repo::sessions, repo::settings, Db};
-use chrono::Timelike;
+use chrono::{DateTime, Timelike, Utc};
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
@@ -106,6 +106,14 @@ pub fn start_scheduler(app: AppHandle) {
                 }
             };
 
+            match apply_postpone(&app, &next.session_type, next.in_window) {
+                PostponeDecision::Hold => continue,
+                PostponeDecision::Refire => {
+                    fired.retain(|t| t != &next.session_type);
+                }
+                PostponeDecision::Neutral => {}
+            }
+
             if !next.in_window || fired.contains(&next.session_type) {
                 continue;
             }
@@ -160,4 +168,113 @@ fn mark_eligible(app: &AppHandle, session_type: &str) -> Result<(), String> {
     let db = app.state::<Db>();
     let conn = db.0.lock().map_err(|e| format!("获取数据库锁失败: {e}"))?;
     sessions::mark_eligible(&conn, &clock::today(), session_type)
+}
+
+#[derive(Debug, PartialEq)]
+enum PostponeDecision {
+    /// 15 分钟未到，本轮不弹同一时段
+    Hold,
+    /// 延后到期且仍在窗口，允许再弹一次
+    Refire,
+    Neutral,
+}
+
+fn decide_postpone(
+    now: DateTime<Utc>,
+    until: Option<DateTime<Utc>>,
+    postpone_type: Option<&str>,
+    next_type: &str,
+    in_window: bool,
+) -> PostponeDecision {
+    let (Some(until), Some(ptype)) = (until, postpone_type) else {
+        return PostponeDecision::Neutral;
+    };
+    if now < until {
+        return if ptype == next_type {
+            PostponeDecision::Hold
+        } else {
+            PostponeDecision::Neutral
+        };
+    }
+    if ptype == next_type && in_window {
+        PostponeDecision::Refire
+    } else {
+        PostponeDecision::Neutral
+    }
+}
+
+fn apply_postpone(app: &AppHandle, session_type: &str, in_window: bool) -> PostponeDecision {
+    let db = app.state::<Db>();
+    let Ok(conn) = db.0.lock() else {
+        return PostponeDecision::Neutral;
+    };
+    let until = settings::get(&conn, settings::POSTPONE_UNTIL)
+        .ok()
+        .flatten()
+        .filter(|s| !s.is_empty())
+        .and_then(|s| clock::parse_ts(&s).ok());
+    let ptype = settings::get(&conn, settings::POSTPONE_TYPE)
+        .ok()
+        .flatten()
+        .filter(|s| !s.is_empty());
+    let now = clock::parse_ts(&clock::now()).ok();
+    let Some(now) = now else {
+        return PostponeDecision::Neutral;
+    };
+
+    let decision = decide_postpone(now, until, ptype.as_deref(), session_type, in_window);
+    if until.is_some_and(|u| now >= u) {
+        let _ = settings::set(&conn, settings::POSTPONE_UNTIL, "");
+        let _ = settings::set(&conn, settings::POSTPONE_TYPE, "");
+    }
+    decision
+}
+
+#[cfg(test)]
+mod postpone_tests {
+    use super::*;
+    use chrono::Duration;
+
+    fn ts(iso: &str) -> DateTime<Utc> {
+        clock::parse_ts(iso).unwrap()
+    }
+
+    #[test]
+    fn 延后未到期时按住同一时段() {
+        let now = ts("2026-08-20T10:00:00Z");
+        let until = ts("2026-08-20T10:15:00Z");
+        assert_eq!(
+            decide_postpone(now, Some(until), Some("morning"), "morning", true),
+            PostponeDecision::Hold
+        );
+    }
+
+    #[test]
+    fn 延后到期且仍在窗口则再弹() {
+        let now = ts("2026-08-20T10:15:00Z");
+        let until = ts("2026-08-20T10:15:00Z");
+        assert_eq!(
+            decide_postpone(now, Some(until), Some("morning"), "morning", true),
+            PostponeDecision::Refire
+        );
+    }
+
+    #[test]
+    fn 延后到期已出窗口则交给下一时段合并() {
+        let now = ts("2026-08-20T11:20:00Z");
+        let until = now - Duration::minutes(5);
+        assert_eq!(
+            decide_postpone(now, Some(until), Some("morning"), "noon", true),
+            PostponeDecision::Neutral
+        );
+    }
+
+    #[test]
+    fn 没有延后标记时不干预() {
+        let now = ts("2026-08-20T10:00:00Z");
+        assert_eq!(
+            decide_postpone(now, None, None, "morning", true),
+            PostponeDecision::Neutral
+        );
+    }
 }

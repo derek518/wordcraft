@@ -28,6 +28,7 @@ function item(overrides: Partial<QueueItem> = {}): QueueItem {
     lapses: 0,
     question_level: 1,
     reinforce_streak: 0,
+    last_review_at: null,
     frequency_band: 1,
     source: 'due_review',
     ...overrides,

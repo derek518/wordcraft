@@ -95,6 +95,9 @@ export const finishSession = (sessionId: number, xpEarned: number) =>
 
 export const getTodaySessions = () => call<Session[]>('get_today_sessions')
 
+export const postponeSession = (sessionId: number) =>
+  call<{ remaining: number }>('postpone_session', { sessionId })
+
 export const markSessionEligible = (sessionType: SessionType) =>
   call<void>('mark_session_eligible', { sessionType })
 

@@ -1,6 +1,6 @@
 [package]
 name = "wordcraft"
-version = "0.1.1"
+version = "0.1.2"
 description = "WordCraft - 游戏化单词记忆软件"
 authors = ["WordCraft Team"]
 license = "MIT"

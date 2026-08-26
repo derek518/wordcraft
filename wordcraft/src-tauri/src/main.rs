@@ -4,6 +4,7 @@
 
 use tauri::Manager;
 
+mod audio;
 mod boss;
 mod cards;
 mod commands;
@@ -53,6 +54,8 @@ fn main() {
                 Err(e) => log::warn!("周报无法定位数据目录: {e}"),
             }
             app.manage(database);
+            // 音频输出流必须常驻：它一旦 drop，正在播的声音立刻停
+            app.manage(audio::AudioPlayer::start());
 
             tray::build(app_handle)?;
             scheduler::start_scheduler(app_handle.clone());

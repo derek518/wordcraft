@@ -23,6 +23,7 @@ tauri-plugin-autostart = "2.5.1"
 chrono = { version = "0.4.45", features = ["serde"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 lettre = { version = "0.11.19", default-features = false, features = ["smtp-transport", "rustls-tls", "builder", "hostname"] }
+rodio = { version = "0.21.1", default-features = false, features = ["playback", "symphonia-mp3"] }
 
 [target."cfg(windows)".dependencies]
 windows = { version = "0.61.3", features = ["Win32_UI_Shell", "Win32_Foundation"] }

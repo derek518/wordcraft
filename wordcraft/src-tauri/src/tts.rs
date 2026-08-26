@@ -63,42 +63,6 @@ fn find_cached(app: &AppHandle, word: &str) -> Option<PathBuf> {
     })
 }
 
-/// 播放本地音频文件。
-#[cfg(target_os = "macos")]
-fn spawn_playback(path: &PathBuf) -> Result<Child, String> {
-    Command::new("/usr/bin/afplay")
-        .arg(path)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| format!("启动 afplay 失败: {e}"))
-}
-
-#[cfg(target_os = "windows")]
-fn spawn_playback(path: &PathBuf) -> Result<Child, String> {
-    // 走 WMP COM 对象而非 SoundPlayer——后者只认 wav，而预生成的是 mp3。
-    // 路径经环境变量传入，不拼进脚本文本（同 spawn_speech 的理由）
-    const SCRIPT: &str = "\
-        $p = New-Object -ComObject WMPlayer.OCX; \
-        $m = $p.newMedia($env:WORDCRAFT_AUDIO_PATH); \
-        $p.currentPlaylist.appendItem($m); \
-        $p.controls.play(); \
-        Start-Sleep -Milliseconds ([int]$m.duration * 1000 + 300)";
-
-    Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", SCRIPT])
-        .env("WORDCRAFT_AUDIO_PATH", path)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| format!("启动音频播放失败: {e}"))
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-fn spawn_playback(_path: &PathBuf) -> Result<Child, String> {
-    Err("当前平台没有可用的音频播放后端".to_string())
-}
-
 // ─────────────────────────────────────────────
 // 平台实现
 // ─────────────────────────────────────────────
@@ -115,8 +79,17 @@ fn spawn_speech(word: &str) -> Result<Child, String> {
         .map_err(|e| format!("启动 say 失败: {e}"))
 }
 
+/// Windows 上创建进程时不弹控制台窗口。
+///
+/// 不加这个标志，每读一个词就闪一次 cmd 窗——Windows 实机上第一眼看到的
+/// 就是这个。0x08000000 = CREATE_NO_WINDOW
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 #[cfg(target_os = "windows")]
 fn spawn_speech(word: &str) -> Result<Child, String> {
+    use std::os::windows::process::CommandExt;
+
     // 词经由环境变量传入，不拼进脚本文本——PowerShell 的 -Command 收的是
     // 可执行脚本，拼接等同于把用户数据当代码执行
     const SCRIPT: &str = "\
@@ -130,6 +103,7 @@ fn spawn_speech(word: &str) -> Result<Child, String> {
     Command::new("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", SCRIPT])
         .env("WORDCRAFT_TTS_WORD", word)
+        .creation_flags(CREATE_NO_WINDOW)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -154,11 +128,17 @@ pub fn play_word_audio(app: AppHandle, word: String) -> Result<(), String> {
     validate_word(&word)?;
 
     // 优先播放预生成音频：神经网络语音明显优于系统合成，且所有用户听到
-    // 同一个发音。缺失时降级到实时合成——两条路径都真的会出声
-    let child = match find_cached(&app, &word) {
-        Some(path) => spawn_playback(&path)?,
-        None => spawn_speech(&word)?,
-    };
+    // 同一个发音。缺失或音频设备不可用时降级到系统合成
+    let player = app.state::<crate::audio::AudioPlayer>();
+    if let Some(path) = find_cached(&app, &word) {
+        match player.play(path) {
+            Ok(()) => return Ok(()),
+            // 设备打开失败仍值得试一次系统合成——它走的是另一套音频栈
+            Err(e) => log::warn!("播放预生成音频失败，改用系统合成: {e}"),
+        }
+    }
+
+    let child = spawn_speech(&word)?;
 
     // 回收子进程并检查退出码。`spawn` 成功只说明命令存在——音色缺失、
     // 音频设备被占用都会让进程立刻非零退出，而调用方已经拿到 Ok 了。

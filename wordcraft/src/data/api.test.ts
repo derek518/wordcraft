@@ -66,10 +66,13 @@ describe('后端调用边界', () => {
 
   it('假数据模式下缺 fixture 的 command 抛错，不返回空', async () => {
     vi.stubEnv('VITE_MOCK', '1')
-    const api = await loadApi()
+    const { mockInvoke } = await import('./devMock')
 
+    // 用一个刻意不存在的名字，而不是某个真 command——
+    // 拿真 command 举例的话，补上它的 fixture 就会把这条测试弄红，
+    // 而它想测的根本不是那个 command
     // 静默返回 undefined 会让调用方拿到「成功但没数据」的响应，
     // 比直接失败难查得多
-    await expect(api.importWords([])).rejects.toThrow(/没有.*假数据|import_words/)
+    expect(() => mockInvoke('__不存在的_command__')).toThrow(/没有.*假数据/)
   })
 })

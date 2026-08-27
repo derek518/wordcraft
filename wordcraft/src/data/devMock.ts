@@ -235,6 +235,15 @@ const HANDLERS: Record<string, (args?: Record<string, unknown>) => unknown> = {
     digest: { due_count: 16, available_blocks: 125, streak: 5, words_to_milestone: 90 },
   }),
 
+  // 假数据模式下没有真词库，「一个都没导入」是事实而非谎报
+  import_words: () => ({ inserted: 0, updated: 0, rejected: [] }),
+  get_study_levels: () => [
+    { value: 'junior', label: '初中', words: 1581 },
+    { value: 'senior', label: '高中', words: 2076 },
+    { value: 'cet4', label: '四级', words: 1621 },
+    { value: 'all', label: '全部', words: 5278 },
+  ],
+
   search_words: () => [],
   play_word_audio: () => null,
   postpone_session: () => ({ remaining: 2 }),

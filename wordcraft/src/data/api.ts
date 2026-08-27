@@ -417,12 +417,18 @@ export const getStudyLevels = () => call<StudyLevelOption[]>('get_study_levels')
 export const DEFAULT_DAILY_NEW = 18
 
 export interface Pace {
-  /** 三时段均分时每场的新词数 */
+  /** 每场新词数下限（遇到的词都不会时） */
   new_per_session: number
-  /** 每场题数 */
+  /** 每场新词数上限（遇到的词基本都会时） */
+  new_per_session_max: number
+  /** 每场题数下限 */
   session_words: number
-  /** 每周新词数 */
+  /** 每场题数上限 */
+  session_words_max: number
+  /** 每周新词数下限 */
   weekly_new: number
+  /** 每周新词数上限 */
+  weekly_new_max: number
 }
 
 /**

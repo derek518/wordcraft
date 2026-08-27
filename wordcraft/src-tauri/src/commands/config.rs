@@ -220,10 +220,10 @@ mod tests {
     #[test]
     fn 节奏投影按时段均分并封顶() {
         // 每日 18 → 每场 6 新词、18 题，一周七天 126 个
-        assert_eq!(
-            get_pace(18, 7),
-            Pace { new_per_session: 6, session_words: 18, weekly_new: 126 }
-        );
+        let p = get_pace(18, 7);
+        assert_eq!((p.new_per_session, p.session_words, p.weekly_new), (6, 18, 126));
+        // 遇到的词基本都会时词数翻倍——已经会的词不该按整词扣预算
+        assert_eq!((p.new_per_session_max, p.weekly_new_max), (12, 252));
         // 只有周末：同样的滑块位置意味着完全不同的进度
         assert_eq!(get_pace(18, 2).weekly_new, 36);
         // 预算为 0 时仍给出复习场的题数，不是 0 题
@@ -290,12 +290,18 @@ mod tests {
 /// 界面上意味着后端调参后界面开始说谎——本项目已经三次栽在写死的数字上。
 #[derive(Debug, PartialEq, serde::Serialize)]
 pub struct Pace {
-    /// 三时段均分时每场的新词数
+    /// 三时段均分时每场的新词数（全都不会的情况）
     pub new_per_session: i64,
+    /// 每场新词数上限（今天遇到的词基本都会时）
+    pub new_per_session_max: i64,
     /// 每场题数
     pub session_words: i64,
-    /// 每周新词数（按传入的学习天数）
+    /// 每场题数上限
+    pub session_words_max: i64,
+    /// 每周新词数下限（按传入的学习天数）
     pub weekly_new: i64,
+    /// 每周新词数上限
+    pub weekly_new_max: i64,
 }
 
 /// 纯投影：不读库，只回答「预算取 N 时节奏是什么样」。
@@ -305,12 +311,20 @@ pub struct Pace {
 #[tauri::command]
 pub fn get_pace(daily_budget: i64, study_days: i64) -> Pace {
     let budget = daily_budget.max(0);
+    let days = study_days.clamp(0, 7);
     // 以「一天从头开始的早场」为代表：这是用户实际会遇到的典型情况
-    let plan = crate::plan::compute(budget, 0, "morning");
+    let low = crate::plan::compute(budget, crate::plan::DayUsage::default(), "morning");
+    // 上限：今天遇到的词基本都会，预算几乎不被扣，词数吃到硬上限
+    let max_words = crate::plan::max_daily_words(budget);
+    let high = crate::plan::compute(max_words, crate::plan::DayUsage::default(), "morning");
+
     Pace {
-        new_per_session: plan.new_quota,
-        session_words: plan.session_words,
-        weekly_new: budget * study_days.clamp(0, 7),
+        new_per_session: low.new_quota,
+        new_per_session_max: high.new_quota,
+        session_words: low.session_words,
+        session_words_max: high.session_words,
+        weekly_new: budget * days,
+        weekly_new_max: max_words * days,
     }
 }
 

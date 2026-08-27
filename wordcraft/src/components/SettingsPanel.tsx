@@ -104,7 +104,13 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
    */
   const projection =
     remaining !== null && remaining > 0 && pace && pace.weekly_new > 0
-      ? { weeks: Math.ceil(remaining / pace.weekly_new), perWeek: pace.weekly_new, remaining }
+      ? {
+          weeks: Math.ceil(remaining / pace.weekly_new),
+          weeksFast: Math.ceil(remaining / Math.max(1, pace.weekly_new_max)),
+          perWeek: pace.weekly_new,
+          perWeekMax: pace.weekly_new_max,
+          remaining,
+        }
       : null
 
   /**
@@ -286,7 +292,7 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
 
         <Row
           title="每日新词上限"
-          hint="一天最多学几个新词。每场的新词数与题数都由它推算，不需要单独设置——两个能各自取值的旋钮会配出无法满足的组合。已经学过的新词会从当天预算里扣除，所以跳过一个时段，剩下的时段会自动补上。"
+          hint="一天最多学几个新词。每场的新词数与题数都由它推算，不需要单独设置。这个数限的是**学习负担**而不是词数：一眼就答对的词几乎不产生复习，扣的额度也少得多，所以遇到的词都会时当天能多给一些。跳过一个时段，剩下的时段会自动补上。"
           settingKey="daily_new_words"
         >
           <div className="flex items-center gap-3">
@@ -302,7 +308,11 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
           </div>
           {pace && (
             <div className="mt-2 text-xs text-wc-text-muted font-game-mono">
-              每场约 {pace.new_per_session} 个新词 · {pace.session_words} 道题
+              每场 {pace.new_per_session}–{pace.new_per_session_max} 个新词 ·{' '}
+              {pace.session_words}–{pace.session_words_max} 道题
+              <span className="block mt-0.5 text-[11px]">
+                答得越顺，取值越靠上限
+              </span>
             </div>
           )}
         </Row>
@@ -391,13 +401,17 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
             <div className="text-wc-text-dim mb-1">按当前设置估算</div>
             <div>
               还剩 <span className="font-game-mono text-wc-accent">{projection.remaining}</span> 个生词，
-              每周 <span className="font-game-mono text-wc-accent">{projection.perWeek}</span> 个，
-              约 <span className="font-game-mono text-wc-gold">{projection.weeks}</span> 周走完
+              每周 <span className="font-game-mono text-wc-accent">{projection.perWeek}</span>–
+              <span className="font-game-mono text-wc-accent">{projection.perWeekMax}</span> 个，
+              约 <span className="font-game-mono text-wc-gold">{projection.weeksFast}</span>–
+              <span className="font-game-mono text-wc-gold">{projection.weeks}</span> 周走完
+            </div>
+            <div className="text-wc-text-dim mt-1">
+              区间取决于遇到的词有多少是已经会的——会得越多走得越快
             </div>
             {projection.weeks > 30 && (
               <div className="text-wc-warning mt-1">
-                超过半年。可以增加学习日，或把「每场新词」调高——每场题量的上限是
-                两分钟，别把单场撑得太长。
+                最慢的那一头超过半年。可以增加学习日，或把「每日新词上限」调高。
               </div>
             )}
           </div>

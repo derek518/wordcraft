@@ -28,7 +28,11 @@ const LEVELS: api.StudyLevelOption[] = [
 ]
 
 /** 后端推算的节奏。数值刻意与「天数×预算」不符，好验证界面确实在读它 */
-const PACE: api.Pace = { new_per_session: 6, session_words: 18, weekly_new: 126 }
+const PACE: api.Pace = {
+  new_per_session: 6, new_per_session_max: 12,
+  session_words: 18, session_words_max: 36,
+  weekly_new: 126, weekly_new_max: 252,
+}
 
 const OVERVIEW: api.AbilityOverview = {
   vocabulary: 2504, vocabulary_low: 2100, vocabulary_high: 3010,
@@ -176,6 +180,34 @@ describe('设置面板', () => {
       expect(text()).not.toContain('初始估计')
     })
 
+    it('每场词量的上下限都取后端返回值，不在界面上乘一遍', async () => {
+      stub()
+      // 上限刻意不是下限的整数倍：界面自己乘的话对不上
+      vi.spyOn(api, 'getPace').mockResolvedValue({
+        ...PACE, new_per_session: 5, new_per_session_max: 17,
+        session_words: 15, session_words_max: 33,
+      })
+      render(<SettingsPanel onBack={() => {}} />)
+      await settle()
+
+      // 折算比例在 plan.rs（cost_of / MAX_RAW_MULTIPLIER）。抄到界面上，
+      // 后端调参后界面就开始说谎
+      expect(text()).toContain('每场 5–17 个新词')
+      expect(text()).toContain('15–33 道题')
+    })
+
+    it('走完生词的周数给出区间，快的那头也来自后端', async () => {
+      stub()
+      vi.spyOn(api, 'getPace').mockResolvedValue({
+        ...PACE, weekly_new: 100, weekly_new_max: 400,
+      })
+      render(<SettingsPanel onBack={() => {}} />)
+      await settle()
+
+      // 2068 个生词：慢 21 周（÷100），快 6 周（÷400）
+      expect(text()).toContain('6–21 周走完')
+    })
+
     it('范围选择被标注为可选，且说明难度不靠它', async () => {
       stub()
       render(<SettingsPanel onBack={() => {}} />)
@@ -247,7 +279,7 @@ describe('设置面板', () => {
   it('周新词数取后端返回值，不在界面上乘一遍', async () => {
     stub()
     // 刻意给一个「天数 × 预算」算不出的数：7 × 18 = 126，不是 100
-    vi.spyOn(api, 'getPace').mockResolvedValue({ ...PACE, weekly_new: 100 })
+    vi.spyOn(api, 'getPace').mockResolvedValue({ ...PACE, weekly_new: 100, weekly_new_max: 100 })
     render(<SettingsPanel onBack={() => {}} />)
     await settle()
 
@@ -259,14 +291,14 @@ describe('设置面板', () => {
   it('每场新词数与题数由后端推算并显示', async () => {
     stub()
     vi.spyOn(api, 'getPace').mockResolvedValue({
-      new_per_session: 9, session_words: 27, weekly_new: 189,
+      ...PACE, new_per_session: 9, new_per_session_max: 15, session_words: 27, session_words_max: 40,
     })
     render(<SettingsPanel onBack={() => {}} />)
     await settle()
 
     // 系数在 plan.rs。抄一份到界面上，后端调参后界面就开始说谎
-    expect(text()).toContain('每场约 9 个新词')
-    expect(text()).toContain('27 道题')
+    expect(text()).toContain('每场 9–15 个新词')
+    expect(text()).toContain('27–40 道题')
   })
 
   it('拖动时按滑块当前值问节奏，而不是已保存的值', async () => {
@@ -288,7 +320,7 @@ describe('设置面板', () => {
 
   it('周末两天时给出超过半年的提醒', async () => {
     stub()
-    vi.spyOn(api, 'getPace').mockResolvedValue({ ...PACE, weekly_new: 36 })
+    vi.spyOn(api, 'getPace').mockResolvedValue({ ...PACE, weekly_new: 36, weekly_new_max: 72 })
     vi.spyOn(api, 'getSetting').mockImplementation(async (k) =>
       k === 'study_days' ? '6,7' : VALUES[k] ?? null,
     )

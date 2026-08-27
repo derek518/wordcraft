@@ -269,11 +269,16 @@ const HANDLERS: Record<string, (args?: Record<string, unknown>) => unknown> = {
   postpone_session: () => ({ remaining: 2 }),
   get_pace: (args) => {
     const budget = (args?.dailyBudget as number) ?? 18
-    const perSession = Math.ceil(budget / 3)
+    const days = (args?.studyDays as number) ?? 7
+    const per = (b: number) => Math.ceil(b / 3)
+    const words = (n: number) => Math.min(40, Math.max(12, n * 3))
     return {
-      new_per_session: perSession,
-      session_words: Math.min(40, Math.max(12, perSession * 3)),
-      weekly_new: budget * ((args?.studyDays as number) ?? 7),
+      new_per_session: per(budget),
+      new_per_session_max: per(budget * 2),
+      session_words: words(per(budget)),
+      session_words_max: words(per(budget * 2)),
+      weekly_new: budget * days,
+      weekly_new_max: budget * 2 * days,
     }
   },
   set_setting: () => null,

@@ -27,6 +27,8 @@ pub enum StudyLevel {
     Junior,
     /// 高中（默认）：学 senior。junior 视为已掌握，不再教
     Senior,
+    /// 四级：考纲之外的扩展。高考后接着用，或基础好的提前拓宽
+    Cet4,
     /// 全部：考纲全收。给基础特别薄弱、或想从头过一遍的用户
     All,
 }
@@ -38,6 +40,7 @@ impl StudyLevel {
         match raw {
             "junior" => Some(Self::Junior),
             "senior" => Some(Self::Senior),
+            "cet4" => Some(Self::Cet4),
             "all" => Some(Self::All),
             _ => None,
         }
@@ -47,6 +50,7 @@ impl StudyLevel {
         match self {
             Self::Junior => "junior",
             Self::Senior => "senior",
+            Self::Cet4 => "cet4",
             Self::All => "all",
         }
     }
@@ -59,6 +63,7 @@ impl StudyLevel {
         match self {
             Self::Junior => "w.level = 'junior'",
             Self::Senior => "w.level = 'senior'",
+            Self::Cet4 => "w.level = 'cet4'",
             Self::All => "1=1",
         }
     }
@@ -174,7 +179,7 @@ mod tests {
 
     #[test]
     fn 三种取值都能往返() {
-        for lv in [StudyLevel::Junior, StudyLevel::Senior, StudyLevel::All] {
+        for lv in [StudyLevel::Junior, StudyLevel::Senior, StudyLevel::Cet4, StudyLevel::All] {
             assert_eq!(StudyLevel::parse(lv.as_str()), Some(lv));
         }
     }

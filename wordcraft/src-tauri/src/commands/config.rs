@@ -19,6 +19,10 @@ const WRITABLE: &[(&str, ValueKind)] = &[
     ("autostart_enabled", ValueKind::Bool),
     ("tts_provider", ValueKind::OneOf(&["edge", "sapi", "off"])),
     ("daily_pause_date", ValueKind::AnyText),
+    // 学习范围的取值随词库而变（导入四级词后多出 cet4），
+    // 所以不能写成固定的 OneOf——交给 StudyLevel::parse 判
+    ("study_level", ValueKind::StudyLevel),
+    ("study_days", ValueKind::StudyDays),
 ];
 
 #[derive(Clone, Copy)]
@@ -27,6 +31,8 @@ enum ValueKind {
     IntRange(i64, i64),
     OneOf(&'static [&'static str]),
     SessionWindows,
+    StudyLevel,
+    StudyDays,
     AnyText,
 }
 
@@ -60,6 +66,16 @@ fn validate(key: &str, value: &str) -> Result<(), String> {
             }
         }
         ValueKind::SessionWindows => validate_session_windows(value)?,
+        ValueKind::StudyLevel => {
+            crate::scope::StudyLevel::parse(value)
+                .ok_or_else(|| format!("`{key}` 无法识别的学习范围 `{value}`"))?;
+        }
+        ValueKind::StudyDays => {
+            // 空集合会被后端回落成「每天」，那种「点了没反应还悄悄变回去」
+            // 比直接拒绝更难理解
+            crate::studydays::parse(value)
+                .ok_or_else(|| format!("`{key}` 需要 1-7 的星期编号，收到 `{value}`"))?;
+        }
         ValueKind::AnyText => {}
     }
     Ok(())
@@ -145,6 +161,41 @@ pub fn set_setting(app: AppHandle, db: State<Db>, key: String, value: String) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 每个前端会写的设置键都必须在白名单里。
+    ///
+    /// `study_level` 与 `study_days` 加进设置面板时漏了这一步：界面上点了
+    /// 毫无反应，而组件测试是绿的——因为它 mock 掉了 `api.setSetting`，
+    /// 恰恰 mock 掉了会拒绝它的那一层。这条测试把清单钉在后端。
+    #[test]
+    fn 前端会写的键全部可写() {
+        for (key, sample) in [
+            ("session_windows", "09:00-11:00,13:00-15:00,19:00-21:00"),
+            ("daily_new_words", "6"),
+            ("session_word_count", "20"),
+            ("sound_enabled", "true"),
+            ("autostart_enabled", "false"),
+            ("tts_provider", "off"),
+            ("study_level", "senior"),
+            ("study_days", "6,7"),
+        ] {
+            assert!(
+                validate(key, sample).is_ok(),
+                "设置面板会写 `{key}`，它必须可写"
+            );
+        }
+    }
+
+    #[test]
+    fn 学习范围与学习日的取值受校验() {
+        assert!(validate("study_level", "大学").is_err());
+        assert!(validate("study_level", "cet4").is_ok(), "四级词导入后要能选");
+
+        assert!(validate("study_days", "6,7").is_ok());
+        // 一天都不学等于停用应用；越界星期同理
+        assert!(validate("study_days", "").is_err());
+        assert!(validate("study_days", "0,8").is_err());
+    }
 
     #[test]
     fn 未在白名单的键被拒绝() {

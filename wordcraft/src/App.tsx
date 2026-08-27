@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import AdventureMap from './components/AdventureMap'
 import WordTrainer from './components/WordTrainer'
+import { fingerprintOf } from './data/libraryFingerprint'
 import type { DrillMode } from './core/question'
 import StatsPanel from './components/StatsPanel'
 import PlacementTest from './components/PlacementTest'
@@ -47,15 +48,25 @@ function MainApp() {
 
   const bootstrap = useCallback(async () => {
     try {
-      const done = await api.getSetting('onboarding_done')
-      if (done === 'true') return
+      const [done, storedPrint] = await Promise.all([
+        api.getSetting('onboarding_done'),
+        api.getSetting('library_fingerprint'),
+      ])
 
-      setImporting(true)
       const res = await fetch('/library.json')
       if (!res.ok) {
         throw new Error(`词库文件读取失败（HTTP ${res.status}）`)
       }
-      const payload: api.WordImport[] = await res.json()
+      const raw = await res.text()
+      const fingerprint = fingerprintOf(raw)
+
+      // 词库没变就跳过。先前这里用 onboarding_done 判——一旦引导走完，
+      // 词库再扩充也永远进不了老用户的库，四级词加了等于没加。
+      // import_words 是按 word 的 upsert，id 保留，学习状态不受影响
+      if (done === 'true' && storedPrint === fingerprint) return
+
+      setImporting(true)
+      const payload: api.WordImport[] = JSON.parse(raw)
 
       const outcome = await api.importWords(payload)
       if (outcome.rejected.length > 0) {
@@ -70,8 +81,11 @@ function MainApp() {
         )
       }
 
-      await api.setSetting('onboarding_done', 'true')
-      setShowWelcome(true)
+      await api.setSetting('library_fingerprint', fingerprint)
+      if (done !== 'true') {
+        await api.setSetting('onboarding_done', 'true')
+        setShowWelcome(true)
+      }
     } catch (e) {
       setBootError(e instanceof Error ? e.message : String(e))
     } finally {

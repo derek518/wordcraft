@@ -12,6 +12,7 @@ const VALUES: Record<string, string> = {
   sound_enabled: 'true',
   tts_provider: 'edge',
   autostart_enabled: 'true',
+  study_level: 'senior',
 }
 
 function stub() {
@@ -78,7 +79,7 @@ describe('设置面板', () => {
 
     // 契约 §2.1 的键；前端写死默认值会在后端改默认时静静分叉
     const asked = get.mock.calls.map((c) => c[0])
-    for (const k of ['session_windows', 'daily_new_words', 'session_word_count', 'tts_provider', 'autostart_enabled']) {
+    for (const k of ['session_windows', 'daily_new_words', 'session_word_count', 'tts_provider', 'autostart_enabled', 'study_level']) {
       expect(asked).toContain(k)
     }
   })
@@ -96,6 +97,22 @@ describe('设置面板', () => {
 
     expect(auto).toHaveBeenCalledWith(false)
     expect(api.setSetting).not.toHaveBeenCalledWith('autostart_enabled', expect.anything())
+  })
+
+  it('学习范围默认高中，切换写入 study_level', async () => {
+    const set = stub()
+    render(<SettingsPanel onBack={() => {}} />)
+    await settle()
+
+    // 默认必须是高中：默认错了，用户要几个月后才会发现自己在背虚词
+    const senior = btn('高中')!
+    expect(senior.className).toContain('border-wc-primary')
+
+    await act(async () => {
+      btn('初中')!.click()
+    })
+    await settle()
+    expect(set).toHaveBeenCalledWith('study_level', 'junior')
   })
 
   it('导出按钮真正请求后端，失败时显示原因', async () => {

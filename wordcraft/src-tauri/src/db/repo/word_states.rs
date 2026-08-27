@@ -130,11 +130,23 @@ pub fn distribution(conn: &Connection) -> Result<Vec<(String, i64)>, String> {
         .map_err(|e| format!("读取状态分布失败: {e}"))
 }
 
-/// 尚无状态记录的词数——即从未被学习过的新词。
-pub fn untouched_count(conn: &Connection) -> Result<i64, String> {
+/// 尚未真正学过的词数（限定在学习范围内）。
+///
+/// 「学过」的判据是 **`reps > 0`——真的作答过**，不是「有没有状态行」。
+/// 摸底会为一千多个词预建状态行，那是「估计你可能认识」，不是「你练过」。
+///
+/// 按行数算的旧口径让界面显示「已点亮 1589/3657」，而用户实际只练过 151 个词——
+/// 十倍的虚高，且正是它让人以为「都这个进度了怎么还在背 the」。
+/// 家园方块的发放早已按 `reps > 0` 判定，此处对齐同一口径。
+pub fn untouched_count(conn: &Connection, scope_sql: &str) -> Result<i64, String> {
     conn.query_row(
-        "SELECT COUNT(*) FROM words w
-         WHERE NOT EXISTS (SELECT 1 FROM word_states s WHERE s.word_id = w.id)",
+        &format!(
+            "SELECT COUNT(*) FROM words w
+             WHERE {scope_sql}
+               AND NOT EXISTS (
+                 SELECT 1 FROM word_states s WHERE s.word_id = w.id AND s.reps > 0
+               )"
+        ),
         [],
         |r| r.get(0),
     )
@@ -268,10 +280,37 @@ mod tests {
 
         assert_eq!(count_by_app_state(&conn, "reinforcing").unwrap(), 2);
         assert_eq!(count_by_app_state(&conn, "review").unwrap(), 1);
-        assert_eq!(untouched_count(&conn).unwrap(), 2, "还有 2 个词从未被学习");
+        assert_eq!(untouched_count(&conn, "1=1").unwrap(), 2, "还有 2 个词从未被学习");
 
         let dist = distribution(&conn).unwrap();
         assert_eq!(dist.len(), 2, "只有两种状态出现过");
+    }
+
+    #[test]
+    fn 摸底预建但未作答的词仍算未学习() {
+        // 这是「已点亮 1589 实则 151」的成因：摸底为一千多个词预建状态行，
+        // 按行数算就把它们全算成了已学。判据必须是 reps > 0
+        let conn = db_with_words(5);
+        let mut seeded = state(1, "review");
+        seeded.reps = 0; // 摸底预分级，从未真正作答
+        upsert(&conn, &seeded).unwrap();
+        upsert(&conn, &state(2, "review")).unwrap(); // reps = 1，真练过
+
+        assert_eq!(
+            untouched_count(&conn, "1=1").unwrap(),
+            4,
+            "预建未答的词不该算作已学"
+        );
+    }
+
+    #[test]
+    fn 未学习统计限定在学习范围内() {
+        let conn = db_with_words(5);
+        conn.execute("UPDATE words SET level='junior' WHERE id <= 2", []).unwrap();
+        conn.execute("UPDATE words SET level='senior' WHERE id > 2", []).unwrap();
+
+        // 高中范围下，初中词不该计入分母
+        assert_eq!(untouched_count(&conn, "w.level = 'senior'").unwrap(), 3);
     }
 
     #[test]

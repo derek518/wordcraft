@@ -30,9 +30,9 @@ const ZONES: [(&str, &str, i64); 6] = [
 pub struct ZoneProgress {
     pub key: String,
     pub name: String,
-    /// 该区总词数，取自数据库而非硬编码
+    /// 该区在**当前学习范围内**的总词数，取自数据库而非硬编码
     pub total: i64,
-    /// 已建立学习状态的词数
+    /// 真正作答过的词数（`reps > 0`）
     pub learned: i64,
     pub unlocked: bool,
     pub required_level: i64,
@@ -46,11 +46,15 @@ pub struct ZoneProgress {
 pub fn get_zone_progress(db: State<Db>) -> Result<Vec<ZoneProgress>, String> {
     let conn = db.0.lock().map_err(|e| format!("获取数据库锁失败: {e}"))?;
     let level = player_stats::get(&conn)?.level;
+    // 高中范围下新手村与清风平原全是初中词，会算出 0/0。
+    // 前端据此把范围内为空的区隐藏——留着它们等于告诉用户
+    // 「这里还有 360 个词要学」，而那些词根本不会被排进队列
+    let scope = crate::scope::current(&conn)?.sql_filter();
 
     ZONES
         .iter()
         .map(|(key, name, required)| {
-            let (total, learned) = counts(&conn, key)?;
+            let (total, learned) = counts(&conn, key, scope)?;
             Ok(ZoneProgress {
                 key: (*key).to_string(),
                 name: (*name).to_string(),
@@ -63,12 +67,17 @@ pub fn get_zone_progress(db: State<Db>) -> Result<Vec<ZoneProgress>, String> {
         .collect()
 }
 
-fn counts(conn: &Connection, zone: &str) -> Result<(i64, i64), String> {
+fn counts(conn: &Connection, zone: &str, scope_sql: &str) -> Result<(i64, i64), String> {
+    // `s.reps > 0` 而非「有状态行」：摸底为一千多个初中词预建了状态，
+    // 按行数算会让新手村显示 50/50「已完成」，而用户一个都没练过。
+    // 与「已点亮水晶」虚高、与家园方块发放，是同一个判据
     conn.query_row(
-        "SELECT COUNT(*),
-                SUM(CASE WHEN s.word_id IS NOT NULL THEN 1 ELSE 0 END)
-         FROM words w LEFT JOIN word_states s ON s.word_id = w.id
-         WHERE w.zone = ?1",
+        &format!(
+            "SELECT COUNT(*),
+                    SUM(CASE WHEN s.word_id IS NOT NULL AND s.reps > 0 THEN 1 ELSE 0 END)
+             FROM words w LEFT JOIN word_states s ON s.word_id = w.id
+             WHERE w.zone = ?1 AND {scope_sql}"
+        ),
         [zone],
         |r| Ok((r.get(0)?, r.get::<_, Option<i64>>(1)?.unwrap_or(0))),
     )

@@ -23,6 +23,16 @@ const VALID_SESSION_TYPES: [&str; 4] = ["morning", "noon", "evening", "free"];
 /// 该上限失去意义，改为 30——留出 10 词余量吸收上一时段的未完成部分。
 pub const MERGED_LIMIT: i64 = 30;
 
+/// 单场最多插入的摸底抽查词。
+///
+/// 先前这一层吃光剩余格位，而摸底会预建一千多个词——实测 1438 个，
+/// 按每场 18 格算，**约 79 场之内新词一个都排不进来**。用户因此
+/// 连着几个月只见到初中虚词。
+///
+/// 抽查的目的是抓摸底假阳性，那是抽样，不是把每条判断都重考一遍。
+/// 每场留两格，既能持续验证，又不至于饿死新词。
+pub const PROBE_PER_SESSION: i64 = 2;
+
 /// 单场词量缺省值。前端不传 limit 时从 settings 读取，缺键才用此值。
 const DEFAULT_SESSION_WORDS: i64 = 20;
 
@@ -164,13 +174,14 @@ fn query_with_state(
         .map_err(|e| format!("读取排队结果失败: {e}"))
 }
 
-fn take_new_words(conn: &Connection, limit: i64) -> Result<Vec<QueueItem>, String> {
+fn take_new_words(conn: &Connection, limit: i64, scope_sql: &str) -> Result<Vec<QueueItem>, String> {
     if limit <= 0 {
         return Ok(Vec::new());
     }
     let sql = format!(
         "SELECT {WORD_COLS} FROM words w
          WHERE NOT EXISTS (SELECT 1 FROM word_states s WHERE s.word_id = w.id)
+           AND {scope_sql}
          ORDER BY w.frequency_band, w.id
          LIMIT {limit}"
     );
@@ -257,6 +268,9 @@ pub fn build(
         return Ok(Vec::new());
     }
 
+    // 学习范围决定「哪些词该教」。高中生不必再背 the / be / I（见 scope.rs）
+    let scope_sql = crate::scope::current(conn)?.sql_filter();
+
     let pool = word_states::count_by_app_state(conn, "reinforcing")?;
     let configured_new = settings::get_int(conn, "daily_new_words", 6)?;
     let quota = adaptive_quota(pool, configured_new);
@@ -269,7 +283,7 @@ pub fn build(
     let reinforce_slots = (limit as f64 * quota.reinforce_ratio).ceil() as i64;
     let reinforcing = query_with_state(
         conn,
-        "s.app_state = 'reinforcing'",
+        &format!("s.app_state = 'reinforcing' AND {scope_sql}"),
         // 先到期的优先；同期则接近离队的优先，让它们尽快清出队列
         "s.due_at ASC, s.reinforce_streak DESC",
         &[],
@@ -286,7 +300,10 @@ pub fn build(
     let remaining = limit - items.len() as i64;
     let due = query_with_state(
         conn,
-        "s.app_state IN ('learning','review','mastered') AND s.due_at <= ?1 AND s.reps > 0",
+        &format!(
+            "s.app_state IN ('learning','review','mastered') AND s.due_at <= ?1 \
+             AND s.reps > 0 AND {scope_sql}"
+        ),
         "s.due_at ASC",
         &[&now],
         remaining,
@@ -299,13 +316,19 @@ pub fn build(
     }
 
     // 3. 摸底抽查：预分级但从未真正作答过的词。
-    //    优先于新词——验证摸底假阳性比学新词更紧急（决议 S7）。
-    let remaining = limit - items.len() as i64;
+    //
+    //    **限量且从难到易。** 决议 S7 给的机制本是「stability 起 7–14 天，
+    //    让假阳性两周内自然到期暴露」——它从没要求把每条判断都重考一遍。
+    //    先前实现按频段升序、吃光剩余格位，等于先去验证「你认识 the」这种
+    //    几乎不可能错的判断，同时把新词全部挤掉。
+    //
+    //    真正可能猜错的是难词那一端，所以按频段降序取。
+    let remaining = (limit - items.len() as i64).min(PROBE_PER_SESSION);
     let probes = query_with_state(
         conn,
-        "s.reps = 0 AND s.app_state != 'new'",
-        // 高频词先验证：误判它们的代价最大
-        "w.frequency_band ASC, s.due_at ASC",
+        &format!("s.reps = 0 AND s.app_state != 'new' AND {scope_sql}"),
+        // 难词先验：摸底在这一端最可能判错
+        "w.frequency_band DESC, s.due_at ASC",
         &[],
         remaining,
         QueueSource::PlacementProbe,
@@ -318,7 +341,7 @@ pub fn build(
 
     // 4. 新词：受自适应配额与剩余空位双重限制
     let remaining = (limit - items.len() as i64).min(quota.new_words);
-    for it in take_new_words(conn, remaining)? {
+    for it in take_new_words(conn, remaining, scope_sql)? {
         if seen.insert(it.word_id) && (items.len() as i64) < limit {
             items.push(it);
         }
@@ -385,7 +408,10 @@ mod tests {
                     pos: "n.".into(),
                     meaning: format!("释义{i}"),
                     example_2: String::new(),
-                    level: "junior".into(),
+                    // senior：与默认学习范围一致。用 junior 的话，
+                    // 下面测的其实是「范围过滤把一切挡光了」，
+                    // 而不是配额逻辑本身
+                    level: "senior".into(),
                     frequency_band: 1,
                     zone: "newbie".into(),
                     source_edition: String::new(),
@@ -538,24 +564,105 @@ mod tests {
     }
 
     #[test]
-    fn 摸底词优先于新词填补空位() {
+    fn 摸底抽查限量且不饿死新词() {
         let conn = seed(20);
-        // 1-3 号是摸底预分级词（reps=0，状态非 new，due 在未来）
-        for id in 1..=3 {
+        // 6 个摸底预分级词（reps=0，状态非 new）
+        for id in 1..=6 {
             set_state(&conn, id, "review", &future(), 0);
         }
-        let q = build(&conn, "morning", 5).unwrap();
+        let q = build(&conn, "morning", 8).unwrap();
 
         let probes = q.iter().filter(|i| i.source == QueueSource::PlacementProbe).count();
-        assert_eq!(probes, 3, "3 个摸底词都应被排入");
-        assert_eq!(q.len(), 5);
+        let news = q.iter().filter(|i| i.source == QueueSource::New).count();
 
-        // 摸底词排在新词之前
-        let first_probe = q.iter().position(|i| i.source == QueueSource::PlacementProbe);
-        let first_new = q.iter().position(|i| i.source == QueueSource::New);
+        // 旧实现把剩余格位全给抽查。摸底会预建一千多个词，
+        // 那意味着几十场之内新词一个都排不进来
+        assert_eq!(probes as i64, PROBE_PER_SESSION, "抽查必须限量");
+        assert!(news > 0, "限量之后新词必须拿得到位置");
+        assert_eq!(q.len(), 8);
+    }
+
+    #[test]
+    fn 摸底抽查从难词开始() {
+        let conn = seed(20);
+        // seed 全是 band 1，另塞两个高频段的摸底词
+        set_state(&conn, 1, "review", &future(), 0);
+        set_state(&conn, 2, "review", &future(), 0);
+        conn.execute("UPDATE words SET frequency_band = 5 WHERE id = 2", [])
+            .unwrap();
+
+        let q = build(&conn, "morning", 8).unwrap();
+        let probe = q
+            .iter()
+            .find(|i| i.source == QueueSource::PlacementProbe)
+            .expect("应有抽查词");
+
+        // 「你认识 the」几乎不可能判错；真正可能猜错的是难词那一端。
+        // 按频段升序取等于把力气花在最不需要验证的判断上
+        assert_eq!(probe.frequency_band, 5, "抽查应先验最可能判错的难词");
+    }
+
+    #[test]
+    fn 学习范围之外的词不进队列() {
+        let mut conn = seed(5);
+        // 再塞一个初中虚词。默认范围是 senior，它绝不该出现
+        words::import(
+            &mut conn,
+            &[words::WordImport {
+                word: "the".into(),
+                phonetic: "/ðə/".into(),
+                pos: "art.".into(),
+                meaning: "那".into(),
+                example_1: "Pass me the book.".into(),
+                example_2: String::new(),
+                level: "junior".into(),
+                frequency_band: 1,
+                zone: "newbie".into(),
+                source_edition: String::new(),
+            }],
+        )
+        .unwrap();
+
+        let q = build(&conn, "morning", 20).unwrap();
         assert!(
-            first_probe < first_new,
-            "摸底抽查应优先于新词——验证假阳性比学新词更紧急"
+            !q.iter().any(|i| i.word == "the"),
+            "高中范围下不该再教初中虚词"
+        );
+    }
+
+    #[test]
+    fn 范围外的旧词到期也不再排进来() {
+        // 用户的真实处境：切到高中范围之前，已经练过一百多个初中词，
+        // 它们带着 reps>0 不断到期。若到期复习这一层不过滤范围，
+        // 这些词会一直回来，切换范围等于没切
+        let mut conn = seed(5);
+        words::import(
+            &mut conn,
+            &[words::WordImport {
+                word: "you".into(),
+                phonetic: "/juː/".into(),
+                pos: "pron.".into(),
+                meaning: "你".into(),
+                example_1: "How are you today?".into(),
+                example_2: String::new(),
+                level: "junior".into(),
+                frequency_band: 1,
+                zone: "newbie".into(),
+                source_edition: String::new(),
+            }],
+        )
+        .unwrap();
+
+        let id: i64 = conn
+            .query_row("SELECT id FROM words WHERE word='you'", [], |r| r.get(0))
+            .unwrap();
+        // 练过 3 次、现在到期
+        set_state(&conn, id, "review", &clock::now(), 3);
+
+        let q = build(&conn, "morning", 20).unwrap();
+        assert!(
+            !q.iter().any(|i| i.word == "you"),
+            "范围外的词即便已到期也不该再考"
         );
     }
 

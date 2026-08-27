@@ -12,6 +12,18 @@ const WINDOW_PRESETS = [
   { label: '在校日', value: '07:00-08:00,12:00-13:30,19:00-22:00' },
 ]
 
+/**
+ * 学习范围。默认高中——产品是给备考高考的学生用的。
+ *
+ * 这不只是筛词：词库里 102 个虚词（the / be / I / you 这类）有 96 个标为
+ * junior，选高中就一并挡掉了，不必再单独维护一份虚词名单。
+ */
+const LEVEL_OPTIONS = [
+  { value: 'junior', label: '初中', hint: '1581 词' },
+  { value: 'senior', label: '高中', hint: '2076 词' },
+  { value: 'all', label: '全部', hint: '3657 词' },
+]
+
 const TTS_OPTIONS = [
   { value: 'edge', label: '优质发音（预生成）' },
   { value: 'sapi', label: '系统发音' },
@@ -24,6 +36,7 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
   const [wordCount, setWordCount] = useState('20')
   const [sound, setSound] = useState(true)
   const [tts, setTts] = useState('edge')
+  const [studyLevel, setStudyLevel] = useState('senior')
   const [autostart, setAutostart] = useState(true)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState('')
@@ -31,13 +44,14 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
 
   const load = useCallback(async () => {
     try {
-      const [w, n, c, s, t, a] = await Promise.all([
+      const [w, n, c, s, t, a, lv] = await Promise.all([
         api.getSetting('session_windows'),
         api.getSetting('daily_new_words'),
         api.getSetting('session_word_count'),
         api.getSetting('sound_enabled'),
         api.getSetting('tts_provider'),
         api.getSetting('autostart_enabled'),
+        api.getSetting('study_level'),
       ])
       setWindows(w ?? WINDOW_PRESETS[0].value)
       setNewWords(n ?? '6')
@@ -45,6 +59,7 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
       setSound(s !== 'false')
       setTts(t ?? 'edge')
       setAutostart(a !== 'false')
+      setStudyLevel(lv ?? 'senior')
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
@@ -231,6 +246,29 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
             <div className={`toggle-switch ${sound ? 'on' : ''}`} style={{ pointerEvents: 'none' }} />
             <span>{sound ? '已开启' : '已关闭'}</span>
           </button>
+        </Row>
+
+        <Row
+          title="学习范围"
+          hint="高中范围不再教 the / be / I 这类初中虚词——已经会的词不该再占用练习时间。切换后立即生效，已练过的范围外单词也不再排入。"
+          settingKey="study_level"
+        >
+          <div className="flex gap-2">
+            {LEVEL_OPTIONS.map((o) => (
+              <button
+                key={o.value}
+                onClick={() => save('study_level', o.value, setStudyLevel)}
+                className={`flex-1 px-3 py-2.5 rounded-xl border text-xs transition-all ${
+                  studyLevel === o.value
+                    ? 'border-wc-primary bg-wc-primary/10 shadow-[0_0_10px_rgba(124,58,237,0.15)]'
+                    : 'border-wc-border bg-wc-surface-2 hover:border-wc-primary/50'
+                }`}
+              >
+                <div className="font-bold">{o.label}</div>
+                <div className="text-[10px] text-wc-text-dim mt-0.5">{o.hint}</div>
+              </button>
+            ))}
+          </div>
         </Row>
 
         <Row

@@ -270,7 +270,9 @@ export default function AdventureMap({ onStartTraining, onOpenStats, onOpenAlbum
         </h2>
         <div className="hud-panel rounded-xl p-3" style={{ borderColor: 'rgba(60, 60, 100, 0.8)' }}>
           <div className="grid grid-cols-2 gap-2">
-            {zones.map((zone) => {
+            {/* 范围内没有词的区不显示。高中范围下新手村与清风平原全是初中词，
+              留着它们等于说「这里还有 360 个词要学」，而那些词根本不会排进队列 */}
+          {zones.filter((z) => z.total > 0).map((zone) => {
               const meta = ZONE_META[zone.key] || ZONE_META.newbie
               const colors = ELEMENT_COLORS[meta.element] || ELEMENT_COLORS.neutral
               const pct = zone.total > 0 ? (zone.learned / zone.total) * 100 : 0

@@ -82,6 +82,17 @@ pub fn find_by_id(conn: &Connection, id: i64) -> Result<Option<Word>, String> {
     .map_err(|e| format!("查询词条 {id} 失败: {e}"))
 }
 
+/// 学习范围内的词数。界面上的分母应当用它——高中范围下显示 /3657
+/// 等于把两千个不打算教的初中词也算进目标，与「已点亮」虚高是同一类失真。
+pub fn count_in_scope(conn: &Connection, scope_sql: &str) -> Result<i64, String> {
+    conn.query_row(
+        &format!("SELECT COUNT(*) FROM words w WHERE {scope_sql}"),
+        [],
+        |r| r.get(0),
+    )
+    .map_err(|e| format!("统计范围内词数失败: {e}"))
+}
+
 pub fn count(conn: &Connection) -> Result<i64, String> {
     conn.query_row("SELECT COUNT(*) FROM words", [], |r| r.get(0))
         .map_err(|e| format!("统计词条数失败: {e}"))

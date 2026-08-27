@@ -44,9 +44,12 @@ pub struct HeatmapCell {
 
 pub fn overall(conn: &Connection) -> Result<OverallStats, String> {
     let stats = player_stats::get(conn)?;
+    // 分子分母都限定在学习范围内。高中范围下把两千个不教的初中词算进
+    // 分母，与「已点亮」虚高是同一类失真
+    let scope = crate::scope::current(conn)?.sql_filter();
     Ok(OverallStats {
-        total_words: words::count(conn)?,
-        untouched: word_states::untouched_count(conn)?,
+        total_words: words::count_in_scope(conn, scope)?,
+        untouched: word_states::untouched_count(conn, scope)?,
         total_reviews: review_logs::total_count(conn)?,
         total_xp: stats.total_xp,
         level: stats.level,
@@ -59,9 +62,10 @@ pub fn overall(conn: &Connection) -> Result<OverallStats, String> {
 }
 
 pub fn mastery_distribution(conn: &Connection) -> Result<MasteryDistribution, String> {
+    let scope = crate::scope::current(conn)?.sql_filter();
     let mut out = MasteryDistribution {
-        total: words::count(conn)?,
-        untouched: word_states::untouched_count(conn)?,
+        total: words::count_in_scope(conn, scope)?,
+        untouched: word_states::untouched_count(conn, scope)?,
         ..Default::default()
     };
 
@@ -169,7 +173,9 @@ mod tests {
                 meaning: format!("释义{i}"),
                 example_1: format!("A word{} appears.", (b'a' + i as u8) as char),
                 example_2: String::new(),
-                level: "junior".into(),
+                // senior：与默认学习范围一致。用 junior 的话统计全被范围
+                // 过滤挡掉，下面测的就不是统计逻辑了
+                level: "senior".into(),
                 frequency_band: 1,
                 zone: "newbie".into(),
                 source_edition: String::new(),

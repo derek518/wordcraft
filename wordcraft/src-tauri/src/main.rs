@@ -16,6 +16,7 @@ mod progression;
 mod queue;
 mod report;
 mod review;
+mod scope;
 mod scheduler;
 mod season;
 mod tray;

@@ -584,6 +584,44 @@ interface WordImportDto {
 - `example_1` 非空且包含 `word` 的某个词形
 - `frequency_band` ∈ 1..5，`zone` ∈ 受控词表
 
+**释义从哪来**（2026-08-27 修订）
+
+```
+ECDICT csv ──extract.py──────→ words.json      词条 + extract 挑的释义
+           └─extract_senses.py→ senses.json     每个词的**全部**释义行
+                                    │
+                     gen_meanings.py（DeepSeek 挑选）
+                                    ↓
+                               meanings.json    最终 pos + meaning
+                                    │
+        words.json + examples.json + meanings.json ──build_library.py──→ library.json
+```
+
+`extract.py` 原本先用 `exchange` 的词形变化筛词性、再取该词性的**第一行**释义。
+ECDICT 的行序是词典编排顺序而非常用度，于是系统性挑中生僻义——实测前 130 个
+高频词约四分之一挑错：
+
+```
+can    vt. 装罐              （aux. 能, 可以 在第 3 行）
+may    n. 五月               （aux. 可以 在第 2 行）
+must   n. 未发酵葡萄汁        （aux. 必须 在第 2 行）
+still  n. 蒸馏室, 剧照        （adv. 仍然 在第 4 行）
+survey n. 纵览, 视察, 测量    （「调查」是同一行第 5 个义项，被截断切掉）
+```
+
+规模：76% 的词有多个词性行，19% 的词 `exchange` 为空、完全没有形态学证据，
+29% 的词选中行的义项被截断到 3 个。错的释义伤两次——既当答案错，也当**干扰项**
+污染别的题。
+
+`gen_meanings.py` 是**选择题不是生成题**：模型只能从 `senses.json` 的候选行里挑，
+校验强制返回的每个义项都是原文子串，挑错顶多是选了次要义项，编不出词库里
+没有的东西。被拒的词沿用 `extract.py` 的原值，重跑脚本会只处理它们。
+
+`build_library.py` 带**词性哨兵**（`SPOT_CHECKS`）：can/may/must/will/should/
+would/could 必须是 `aux.`，still/just/even/well 必须是 `adv.`，but 必须是
+`conj.`。释义重新生成时若又挑回生僻义，构建当场失败——否则要等孩子背错了
+才会有人发现。
+
 **分区规则**（2026-08-06 按实测数据修订）
 
 原规则「`zone` 由 `level + frequency_band` 直接推导」在真实词库上失效：格子大小

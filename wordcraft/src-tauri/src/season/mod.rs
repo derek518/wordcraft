@@ -6,8 +6,7 @@
 mod scoring;
 
 pub use scoring::{
-    can_afford, points_for, track_ratio, week_start, REDEEM_DRAW_TICKET, REDEEM_MAKEUP_CARD,
-    SESSIONS_PER_WEEK,
+    can_afford, points_for_total, ratio_of, week_start, SESSIONS_PER_DAY, REDEEM_DRAW_TICKET, REDEEM_MAKEUP_CARD,
 };
 
 use crate::db::{clock, repo::player_stats, Db};
@@ -93,15 +92,20 @@ fn state_of(conn: &Connection, today: NaiveDate) -> Result<SeasonState, String> 
     let last_week = start - chrono::Duration::days(7);
     let ghost = sessions_in_week(conn, last_week, elapsed)?;
 
+    // 分母按学习日数算，不是写死的 21。只有周末能用时，21 这个目标
+    // 从第一天起就够不着——够不着的目标不激励人，只会让人不再看它
+    let study_days = crate::studydays::current(conn)?.len() as i64;
+    let total = study_days * SESSIONS_PER_DAY;
+
     Ok(SeasonState {
         week_start: start.to_string(),
         week_end: (start + chrono::Duration::days(6)).to_string(),
         sessions_done: done,
-        sessions_total: SESSIONS_PER_WEEK,
-        progress: track_ratio(done),
-        ghost_progress: track_ratio(ghost),
+        sessions_total: total,
+        progress: ratio_of(done, total),
+        ghost_progress: ratio_of(ghost, total),
         ghost_sessions: ghost,
-        projected_points: points_for(done),
+        projected_points: points_for_total(done, total),
         track_points: player_stats::get(conn)?.track_points,
         points_per_session: scoring::POINTS_PER_SESSION,
         perfect_bonus: scoring::PERFECT_WEEK_BONUS,
@@ -129,6 +133,7 @@ pub fn settle_past_weeks(conn: &mut Connection, today: NaiveDate) -> Result<Sett
         });
     };
 
+    let week_total = crate::studydays::current(conn)?.len() as i64 * SESSIONS_PER_DAY;
     let mut week = week_start(parse_date(&earliest)?);
     let mut pending: Vec<(String, i64, i64)> = Vec::new();
 
@@ -144,7 +149,9 @@ pub fn settle_past_weeks(conn: &mut Connection, today: NaiveDate) -> Result<Sett
 
         if already == 0 {
             let done = sessions_in_week(conn, week, 7)?;
-            pending.push((key, done, points_for(done)));
+            // 结算同样按学习日口径。用写死的 21 判，只在周末学的用户
+            // 每一周都拿不到完美奖励——那是在惩罚他上学
+            pending.push((key, done, points_for_total(done, week_total)));
         }
         week += chrono::Duration::days(7);
     }
@@ -303,6 +310,34 @@ mod tests {
             let s = sessions::start(conn, date, t, 20, &clock::now()).unwrap();
             sessions::finish(conn, s.id, 20, 100, &clock::now()).unwrap();
         }
+    }
+
+    #[test]
+    fn 赛道分母跟随学习日设置() {
+        let conn = db();
+        crate::db::repo::settings::set(&conn, crate::studydays::SETTING_KEY, "6,7").unwrap();
+
+        let s = state_of(&conn, d("2026-08-05")).unwrap();
+        // 只在周末学：2 天 × 3 时段 = 6，而不是写死的 21。
+        // 分母不跟着走，「完美一周」从第一天起就够不着
+        assert_eq!(s.sessions_total, 6);
+    }
+
+    #[test]
+    fn 周末练满即算完美周() {
+        let conn = db();
+        crate::db::repo::settings::set(&conn, crate::studydays::SETTING_KEY, "6,7").unwrap();
+        // 2026-08-08 周六、08-09 周日
+        complete(&conn, "2026-08-08", &["morning", "noon", "evening"]);
+        complete(&conn, "2026-08-09", &["morning", "noon", "evening"]);
+
+        let s = state_of(&conn, d("2026-08-09")).unwrap();
+        assert_eq!(s.progress, 1.0, "六个时段就是他的一个不落");
+        assert_eq!(
+            s.projected_points,
+            6 * scoring::POINTS_PER_SESSION + scoring::PERFECT_WEEK_BONUS,
+            "拿不到完美奖励等于惩罚他上学"
+        );
     }
 
     #[test]

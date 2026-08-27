@@ -13,9 +13,17 @@ const VALUES: Record<string, string> = {
   tts_provider: 'edge',
   autostart_enabled: 'true',
   study_level: 'senior',
+  study_days: '1,2,3,4,5,6,7',
+}
+
+const STATS = {
+  total_words: 2076, untouched: 2068, total_reviews: 389,
+  total_xp: 5486, level: 11, current_streak: 0, best_streak: 12,
+  vocab_estimate: 1382, draw_tickets: 0, makeup_cards: 0,
 }
 
 function stub() {
+  vi.spyOn(api, 'getOverallStats').mockResolvedValue(STATS)
   vi.spyOn(api, 'getSetting').mockImplementation(async (k) => VALUES[k] ?? null)
   vi.spyOn(api, 'setAutostart').mockResolvedValue(undefined)
   vi.spyOn(api, 'exportDataJson').mockResolvedValue('{}')
@@ -24,6 +32,8 @@ function stub() {
 
 const btn = (t: string) =>
   [...document.querySelectorAll('button')].find((b) => b.textContent?.includes(t))
+
+const text = () => document.body.textContent ?? ''
 
 async function settle() {
   for (let i = 0; i < 3; i++) await act(async () => { await Promise.resolve() })
@@ -79,7 +89,7 @@ describe('设置面板', () => {
 
     // 契约 §2.1 的键；前端写死默认值会在后端改默认时静静分叉
     const asked = get.mock.calls.map((c) => c[0])
-    for (const k of ['session_windows', 'daily_new_words', 'session_word_count', 'tts_provider', 'autostart_enabled', 'study_level']) {
+    for (const k of ['session_windows', 'daily_new_words', 'session_word_count', 'tts_provider', 'autostart_enabled', 'study_level', 'study_days']) {
       expect(asked).toContain(k)
     }
   })
@@ -113,6 +123,64 @@ describe('设置面板', () => {
     })
     await settle()
     expect(set).toHaveBeenCalledWith('study_level', 'junior')
+  })
+
+  it('取消工作日后只剩周末', async () => {
+    const set = stub()
+    render(<SettingsPanel onBack={() => {}} />)
+    await settle()
+
+    await act(async () => {
+      btn('五')!.click()
+    })
+    await settle()
+    expect(set).toHaveBeenCalledWith('study_days', '1,2,3,4,6,7')
+  })
+
+  it('不允许把学习日清空', async () => {
+    const set = stub()
+    vi.spyOn(api, 'getSetting').mockImplementation(async (k) =>
+      k === 'study_days' ? '6' : VALUES[k] ?? null,
+    )
+    render(<SettingsPanel onBack={() => {}} />)
+    await settle()
+
+    await act(async () => {
+      btn('六')!.click() // 取消掉唯一剩下的那天
+    })
+    await settle()
+
+    // 一天都不学等于停用应用。后端会静静回落到「每天」，
+    // 那种「点了没反应还悄悄变回去」比直接不允许更难理解
+    expect(set).not.toHaveBeenCalledWith('study_days', expect.anything())
+  })
+
+  it('按学习日与每场新词估算走完剩余生词的周数', async () => {
+    stub()
+    render(<SettingsPanel onBack={() => {}} />)
+    await settle()
+
+    // 7 天 × 3 场 × 6 新词 = 126/周，2068 个生词约 17 周
+    expect(text()).toContain('2068')
+    expect(text()).toContain('126')
+    expect(text()).toContain('17')
+  })
+
+  it('周末两天时给出超过半年的提醒', async () => {
+    vi.spyOn(api, 'getOverallStats').mockResolvedValue(STATS)
+    vi.spyOn(api, 'setSetting').mockResolvedValue(undefined)
+    vi.spyOn(api, 'setAutostart').mockResolvedValue(undefined)
+    vi.spyOn(api, 'exportDataJson').mockResolvedValue('{}')
+    vi.spyOn(api, 'getSetting').mockImplementation(async (k) =>
+      k === 'study_days' ? '6,7' : VALUES[k] ?? null,
+    )
+    render(<SettingsPanel onBack={() => {}} />)
+    await settle()
+
+    // 2 天 × 3 场 × 6 = 36/周 → 58 周。默认配置是按「每天都能用」调的，
+    // 改成只有周末之后界面上看不出任何区别，这条提醒就是那个区别
+    expect(text()).toContain('58')
+    expect(text()).toContain('超过半年')
   })
 
   it('导出按钮真正请求后端，失败时显示原因', async () => {

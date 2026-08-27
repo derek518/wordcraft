@@ -84,6 +84,17 @@ pub fn current(conn: &Connection) -> Result<StudyLevel, String> {
     }
 }
 
+/// 启动时报告当前学习范围。
+///
+/// 这次「几个月都在背 the」之所以难以察觉，正是因为没有任何地方说得出
+/// 「现在在教哪一批词」。一行日志的成本，抵得上一次几百条作答的浪费。
+pub fn log_current(conn: &Connection) {
+    match current(conn) {
+        Ok(level) => log::info!("学习范围: {}", level.as_str()),
+        Err(e) => log::warn!("读取学习范围失败: {e}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

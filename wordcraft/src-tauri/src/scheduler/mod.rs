@@ -176,6 +176,12 @@ pub fn start_scheduler(app: AppHandle) {
                 check_weekly_report(&app);
             }
 
+            // 非学习日不打扰。上学日在写作业时被单词窗口打断纯属骚扰，
+            // 而连续天数那边 eligible=0 判 Frozen，不弹也不会断签（决议 S6）
+            if !is_study_day_now(&app) {
+                continue;
+            }
+
             let next = match compute(&app) {
                 Ok(n) => n,
                 Err(e) => {
@@ -230,6 +236,22 @@ pub fn start_scheduler(app: AppHandle) {
             fired.push(next.session_type);
         }
     });
+}
+
+/// 今天是否学习日。读不到设置时按「是」处理——少弹一次的代价小于整周不弹。
+fn is_study_day_now(app: &AppHandle) -> bool {
+    let db = app.state::<Db>();
+    let Ok(conn) = db.0.lock() else { return true };
+    let Ok(days) = crate::studydays::current(&conn) else {
+        return true;
+    };
+    match chrono::NaiveDate::parse_from_str(&clock::today(), "%Y-%m-%d") {
+        Ok(today) => crate::studydays::is_study_day(&days, today),
+        Err(e) => {
+            log::warn!("解析今天日期失败，按学习日处理: {e}");
+            true
+        }
+    }
 }
 
 /// 周报检查。取不到数据目录时只记日志——周报失效不该影响弹窗调度。

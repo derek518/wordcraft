@@ -19,6 +19,7 @@ mod review;
 mod scope;
 mod scheduler;
 mod season;
+mod studydays;
 mod tray;
 mod tts;
 
@@ -53,6 +54,12 @@ fn main() {
             match app_handle.path().app_data_dir() {
                 Ok(dir) => report::startup_check(&database, &dir),
                 Err(e) => log::warn!("周报无法定位数据目录: {e}"),
+            }
+            // 把学习范围与学习日写进启动日志。这次「几个月都在背 the」
+            // 之所以难查，正是因为没有任何地方说得出当前在教哪一批词
+            if let Ok(conn) = database.0.lock() {
+                scope::log_current(&conn);
+                studydays::log_current(&conn);
             }
             app.manage(database);
             // 音频输出流必须常驻：它一旦 drop，正在播的声音立刻停

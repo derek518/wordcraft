@@ -24,6 +24,12 @@ const LEVEL_OPTIONS = [
   { value: 'all', label: '全部', hint: '3657 词' },
 ]
 
+/** ISO 星期：1=周一 … 7=周日 */
+const WEEKDAYS = [
+  { v: 1, label: '一' }, { v: 2, label: '二' }, { v: 3, label: '三' },
+  { v: 4, label: '四' }, { v: 5, label: '五' }, { v: 6, label: '六' }, { v: 7, label: '日' },
+]
+
 const TTS_OPTIONS = [
   { value: 'edge', label: '优质发音（预生成）' },
   { value: 'sapi', label: '系统发音' },
@@ -37,6 +43,8 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
   const [sound, setSound] = useState(true)
   const [tts, setTts] = useState('edge')
   const [studyLevel, setStudyLevel] = useState('senior')
+  const [studyDays, setStudyDays] = useState('1,2,3,4,5,6,7')
+  const [remaining, setRemaining] = useState<number | null>(null)
   const [autostart, setAutostart] = useState(true)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState('')
@@ -44,7 +52,7 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
 
   const load = useCallback(async () => {
     try {
-      const [w, n, c, s, t, a, lv] = await Promise.all([
+      const [w, n, c, s, t, a, lv, sd, st] = await Promise.all([
         api.getSetting('session_windows'),
         api.getSetting('daily_new_words'),
         api.getSetting('session_word_count'),
@@ -52,6 +60,8 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
         api.getSetting('tts_provider'),
         api.getSetting('autostart_enabled'),
         api.getSetting('study_level'),
+        api.getSetting('study_days'),
+        api.getOverallStats(),
       ])
       setWindows(w ?? WINDOW_PRESETS[0].value)
       setNewWords(n ?? '6')
@@ -60,6 +70,8 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
       setTts(t ?? 'edge')
       setAutostart(a !== 'false')
       setStudyLevel(lv ?? 'senior')
+      setStudyDays(sd ?? '1,2,3,4,5,6,7')
+      setRemaining(st.untouched)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
@@ -68,6 +80,20 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
   useEffect(() => {
     void load()
   }, [load])
+
+  /**
+   * 按当前配置走完剩余生词需要多久。
+   *
+   * 把这笔账摆出来，是因为它不摆出来就没人算：默认配置是按「每天都能用」
+   * 调的，改成只有周末之后同样的滑块意味着一年多——而界面上看不出任何区别。
+   */
+  const projection = (() => {
+    if (remaining === null || remaining <= 0) return null
+    const days = studyDays.split(',').filter(Boolean).length
+    const perWeek = days * 3 * Number(newWords || '0')
+    if (perWeek <= 0) return null
+    return { weeks: Math.ceil(remaining / perWeek), perWeek, remaining }
+  })()
 
   const save = async (key: string, value: string, apply: (v: string) => void) => {
     setError('')
@@ -268,6 +294,57 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
                 <div className="text-[10px] text-wc-text-dim mt-0.5">{o.hint}</div>
               </button>
             ))}
+          </div>
+        </Row>
+
+        {projection && (
+          <div className="rounded-xl border border-wc-border bg-wc-surface-2/60 p-3 text-xs">
+            <div className="text-wc-text-dim mb-1">按当前设置估算</div>
+            <div>
+              还剩 <span className="font-game-mono text-wc-accent">{projection.remaining}</span> 个生词，
+              每周 <span className="font-game-mono text-wc-accent">{projection.perWeek}</span> 个，
+              约 <span className="font-game-mono text-wc-gold">{projection.weeks}</span> 周走完
+            </div>
+            {projection.weeks > 30 && (
+              <div className="text-wc-warning mt-1">
+                超过半年。可以增加学习日，或把「每场新词」调高——每场题量的上限是
+                两分钟，别把单场撑得太长。
+              </div>
+            )}
+          </div>
+        )}
+
+        <Row
+          title="学习日"
+          hint="只在选中的日子弹出训练，赛道也按这几天计分。上学期间把工作日取消掉——没弹窗的日子不算断签，赛道目标也会跟着缩小，不会留一个永远够不着的「完美一周」。"
+          settingKey="study_days"
+        >
+          <div className="flex gap-1.5">
+            {WEEKDAYS.map((d) => {
+              const picked = studyDays.split(',').includes(String(d.v))
+              return (
+                <button
+                  key={d.v}
+                  onClick={() => {
+                    const cur = studyDays.split(',').filter(Boolean)
+                    const next = picked
+                      ? cur.filter((x) => x !== String(d.v))
+                      : [...cur, String(d.v)].sort()
+                    // 一天都不选等于停用整个应用，后端会回落到每天——
+                    // 与其让它静静回滚，不如这里就不允许
+                    if (next.length === 0) return
+                    save('study_days', next.join(','), setStudyDays)
+                  }}
+                  className={`flex-1 py-2.5 rounded-xl border text-xs transition-all ${
+                    picked
+                      ? 'border-wc-primary bg-wc-primary/10 shadow-[0_0_10px_rgba(124,58,237,0.15)]'
+                      : 'border-wc-border bg-wc-surface-2 hover:border-wc-primary/50'
+                  }`}
+                >
+                  {d.label}
+                </button>
+              )
+            })}
           </div>
         </Row>
 

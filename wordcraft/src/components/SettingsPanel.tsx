@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import * as api from '../data/api'
 
 interface SettingsPanelProps {
@@ -85,6 +85,42 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
     if (perWeek <= 0) return null
     return { weeks: Math.ceil(remaining / perWeek), perWeek, remaining }
   })()
+
+  /**
+   * 滑块的保存。停手 400ms 后提交一次。
+   *
+   * 先前挂在 `onMouseUp` 上，有两个毛病：
+   * - 闭包捕获的是渲染时的 state。**点击滑轨**时 mousedown→change→mouseup
+   *   可能在同一批处理内完成，于是保存旧值再回写，滑块弹回原位
+   * - 用方向键调滑块只触发 change、不触发 mouseup，**改动静默丢失**
+   *
+   * 走 change 两者都没有，也不必再区分鼠标与触摸。
+   */
+  const debounced = useRef<
+    Record<string, { timer: ReturnType<typeof setTimeout>; flush: () => void }>
+  >({})
+
+  const saveDebounced = (key: string, value: string, apply: (v: string) => void) => {
+    apply(value)
+    clearTimeout(debounced.current[key]?.timer)
+    const commit = () => {
+      delete debounced.current[key]
+      void save(key, value, apply)
+    }
+    debounced.current[key] = { timer: setTimeout(commit, 400), flush: commit }
+  }
+
+  // 卸载时把待提交的写入**落地**而不是丢掉——
+  // 拖完滑块立刻点返回，那次调整同样该算数
+  useEffect(() => {
+    const pending = debounced.current
+    return () => {
+      Object.values(pending).forEach(({ timer, flush }) => {
+        clearTimeout(timer)
+        flush()
+      })
+    }
+  }, [])
 
   const save = async (key: string, value: string, apply: (v: string) => void) => {
     setError('')
@@ -212,8 +248,8 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
         </Row>
 
         <Row
-          title="每日新词上限"
-          hint="实际数量受强化队列大小自动调节，此处是上限。调高会让复习负担同步上升——每学 1 个新词约产生 9 次后续复习。"
+          title="每场新词上限"
+          hint="每个时段最多引入的新词数。三个时段合计约为三倍——设 6 则一天约 18 个。实际数量还会受强化队列大小自动调节。调高会让复习负担同步上升：每学 1 个新词约产生 9 次后续复习。"
           settingKey="daily_new_words"
         >
           <div className="flex items-center gap-3">
@@ -222,9 +258,7 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
               min={0}
               max={20}
               value={newWords}
-              onChange={(e) => setNewWords(e.target.value)}
-              onMouseUp={() => save('daily_new_words', newWords, setNewWords)}
-              onTouchEnd={() => save('daily_new_words', newWords, setNewWords)}
+              onChange={(e) => saveDebounced('daily_new_words', e.target.value, setNewWords)}
               className="flex-1 accent-wc-primary"
             />
             <span className="font-game-mono w-10 text-right text-wc-accent">{newWords}</span>
@@ -233,7 +267,7 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
 
         <Row
           title="单场词量"
-          hint="一次训练的题目数。20 词约 3-4 分钟。"
+          hint="一次训练的题目**上限**。凑不够不会硬凑——没有到期复习时，实际题数就等于「每场新词上限」加上少量强化词。20 词约 3-4 分钟。"
           settingKey="session_word_count"
         >
           <div className="flex items-center gap-3">
@@ -242,9 +276,7 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
               min={5}
               max={40}
               value={wordCount}
-              onChange={(e) => setWordCount(e.target.value)}
-              onMouseUp={() => save('session_word_count', wordCount, setWordCount)}
-              onTouchEnd={() => save('session_word_count', wordCount, setWordCount)}
+              onChange={(e) => saveDebounced('session_word_count', e.target.value, setWordCount)}
               className="flex-1 accent-wc-primary"
             />
             <span className="font-game-mono w-10 text-right text-wc-accent">{wordCount}</span>

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, act, cleanup } from '@testing-library/react'
+import { render, screen, act, cleanup, fireEvent } from '@testing-library/react'
 import SettingsPanel from './SettingsPanel'
 import * as api from '../data/api'
 
@@ -205,6 +205,104 @@ describe('设置面板', () => {
     // 改成只有周末之后界面上看不出任何区别，这条提醒就是那个区别
     expect(text()).toContain('58')
     expect(text()).toContain('超过半年')
+  })
+
+  /** 数值滑块。取当前值为 `now` 的那一个 */
+  const slider = (now: string) =>
+    [...document.querySelectorAll<HTMLInputElement>('input[type=range]')].find(
+      (i) => i.value === now,
+    )!
+
+  it('拖动滑块后按新值保存，不是保存旧值', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const set = stub()
+    render(<SettingsPanel onBack={() => {}} />)
+    await settle()
+
+    await act(async () => {
+      fireEvent.change(slider('20'), { target: { value: '29' } })
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500)
+    })
+
+    // 先前挂在 onMouseUp 上，闭包捕获的是渲染时的旧值——
+    // 点击滑轨会保存旧值再回写，滑块弹回原位
+    expect(set).toHaveBeenCalledWith('session_word_count', '29')
+    vi.useRealTimers()
+  })
+
+  it('连续拖动只提交最后一个值', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const set = stub()
+    render(<SettingsPanel onBack={() => {}} />)
+    await settle()
+
+    for (const v of ['21', '25', '29']) {
+      await act(async () => {
+        fireEvent.change(slider(v === '21' ? '20' : v === '25' ? '21' : '25'), {
+          target: { value: v },
+        })
+      })
+    }
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500)
+    })
+
+    // 拖一次滑块会连发几十个 change，每个都写库既慢又无谓
+    const calls = set.mock.calls.filter((c) => c[0] === 'session_word_count')
+    expect(calls).toHaveLength(1)
+    expect(calls[0][1]).toBe('29')
+    vi.useRealTimers()
+  })
+
+  it('用方向键调整同样会保存', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const set = stub()
+    render(<SettingsPanel onBack={() => {}} />)
+    await settle()
+
+    // 键盘只触发 change 不触发 mouseup——先前这条路上的改动静默丢失
+    await act(async () => {
+      fireEvent.change(slider('6'), { target: { value: '7' } })
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500)
+    })
+
+    expect(set).toHaveBeenCalledWith('daily_new_words', '7')
+    vi.useRealTimers()
+  })
+
+  it('新词上限的标签说明它是每场而非每日', async () => {
+    stub()
+    render(<SettingsPanel onBack={() => {}} />)
+    await settle()
+
+    // 后端在每场 build() 里读这个值当本场配额，三个时段就是三倍。
+    // 标签写「每日」会让人以为设 14 就是一天 14 个，实际是 42
+    expect(text()).toContain('每场新词上限')
+    expect(text()).toContain('三倍')
+    expect(text()).not.toContain('每日新词上限')
+  })
+
+  it('拖完立刻离开页面，改动仍会落地', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const set = stub()
+    const { unmount } = render(<SettingsPanel onBack={() => {}} />)
+    await settle()
+
+    await act(async () => {
+      fireEvent.change(slider('20'), { target: { value: '26' } })
+    })
+    // 不等防抖到期就离开
+    await act(async () => {
+      unmount()
+    })
+
+    // 丢掉待提交的写入，等于用户白调了一次
+    expect(set).toHaveBeenCalledWith('session_word_count', '26')
+    vi.useRealTimers()
   })
 
   it('导出按钮真正请求后端，失败时显示原因', async () => {

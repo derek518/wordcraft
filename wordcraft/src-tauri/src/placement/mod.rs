@@ -1,22 +1,41 @@
-//! 摸底分级。contracts §9.2。
+//! 摸底：给能力估计一个起点。contracts §9。
 //!
-//! 目标是**压缩实际待学量**，不是给每个词打标签——60 题覆盖不了 1600 词，
-//! 产出的是每层掌握率而非逐词判定。判错的词由 §9.2④ 的日常抽查纠正。
+//! ## 从「逐词预分级」改成「只定 θ」
+//!
+//! 原设计考 60 道初中词，按频段整段判定：band 1 对 11 题就把那 1067 个词
+//! 全部标成「已掌握」，对 9 题就整段降级。60 题产出 5 个桶的结论，覆盖
+//! 1600 个词——而且只覆盖初中词，senior 与 cet4 一律当新词。
+//!
+//! 它还预建了约 1438 条 `word_states`，那些词因此被挡在新词队列之外，
+//! 依据只是一次频段级的猜测。
+//!
+//! 现在这件事由能力模型做，而且更细：θ 给出**每个词**的掌握概率，并且
+//! 每天的作答都在修正它（见 `ability.rs` 与契约 §13）。摸底只剩一个职责——
+//! **给 θ 一个起点**，免得头几场把难度放错。
+//!
+//! ## 为什么只有 20 题
+//!
+//! 一次性摸底不可能精确：四选一有 25% 的猜对下限，信息量存在上限。模拟显示
+//! 20 题已能把「首场难度放对」的比例从 0%（纯先验，水平偏离时必错）提到
+//! 九成，再加题收益很小。剩下的精度靠日常作答积累——一周的观测量远超任何
+//! 摸底测试。
+//!
+//! ## 不再写 word_states
+//!
+//! 摸底答对一次不等于掌握。真要跳过某个词，让 θ 去判——它对每个词都有概率，
+//! 而且会随作答修正。预建状态是把一次性的猜测**固化**成不可见的过滤条件。
 
-mod grading;
-
-pub use grading::{
-    estimate_vocab, grade_for, is_pass, stability_range, PreGrade, CONSECUTIVE_MISS_LIMIT,
-    PLACEMENT_LEVEL, QUESTIONS_PER_BAND,
-};
-
-use crate::db::{clock, repo::settings, repo::word_states, Db};
+use crate::ability;
+use crate::commands::stats::AbilityOverview;
+use crate::db::{clock, repo::player_stats, repo::settings, Db};
 use rusqlite::Connection;
 use serde::Serialize;
 use tauri::State;
 
-/// 频段层数。
-const BANDS: [i64; 5] = [1, 2, 3, 4, 5];
+/// 摸底题数。
+///
+/// 由模拟选定，见 `ability::PLACEMENT_PRIOR_INFORMATION` 的注释表。
+pub const ITEMS: i64 = 20;
 
 #[derive(Debug, Serialize)]
 pub struct PlacementQuestion {
@@ -25,106 +44,69 @@ pub struct PlacementQuestion {
     pub phonetic: String,
     pub pos: String,
     pub meaning: String,
-    pub band: i64,
-    /// 已答题数与预计总题数，用于渲染进度
+    /// 该词的词频排名。界面用它显示「这题有多难」
+    pub frequency_rank: i64,
     pub answered: i64,
     pub total: i64,
 }
 
 #[derive(Debug, Serialize)]
-pub struct PlacementOutcome {
-    pub vocab_estimate: i64,
-    /// 各层掌握率，按 band 升序
-    pub pass_rates: Vec<f64>,
-    /// 预分级影响的词数，按状态分类
-    pub graded_review: i64,
-    pub graded_learning: i64,
-    pub skipped_new: i64,
+pub struct AnswerOutcome {
+    pub answered: i64,
+    pub total: i64,
+    /// 题目答完了，可以调 finalize
+    pub placement_done: bool,
 }
 
 fn lock(db: &Db) -> Result<std::sync::MutexGuard<'_, Connection>, String> {
     db.0.lock().map_err(|e| format!("获取数据库锁失败: {e}"))
 }
 
-/// 当前应出题的频段：第一个未测完的层。
+fn answered_count(conn: &Connection) -> Result<i64, String> {
+    conn.query_row("SELECT COUNT(*) FROM placement_asked", [], |r| r.get(0))
+        .map_err(|e| format!("统计摸底已出题数失败: {e}"))
+}
+
+/// 取离当前能力边界最近、且没问过的词。
 ///
-/// 返回 None 表示所有层都已关闭，摸底可以结算了。
-fn active_band(conn: &Connection) -> Result<Option<i64>, String> {
-    for band in BANDS {
-        let closed: Option<i64> = conn
-            .query_row(
-                "SELECT is_closed FROM placement_results WHERE band = ?1",
-                [band],
-                |r| r.get(0),
-            )
-            .ok();
-        if closed != Some(1) {
-            return Ok(Some(band));
-        }
-    }
-    Ok(None)
-}
-
-/// 取一道未出过的题。
-fn pick_question(conn: &Connection, band: i64) -> Result<Option<PlacementQuestion>, String> {
-    let (answered, total) = progress(conn)?;
-
-    let row = conn
-        .query_row(
-            "SELECT w.id, w.word, w.phonetic, w.pos, w.meaning
-             FROM words w
-             WHERE w.level = ?1 AND w.frequency_band = ?2
-               AND NOT EXISTS (SELECT 1 FROM placement_asked a WHERE a.word_id = w.id)
-             ORDER BY RANDOM() LIMIT 1",
-            rusqlite::params![PLACEMENT_LEVEL, band],
-            |r| {
-                Ok(PlacementQuestion {
-                    word_id: r.get(0)?,
-                    word: r.get(1)?,
-                    phonetic: r.get(2)?,
-                    pos: r.get(3)?,
-                    meaning: r.get(4)?,
-                    band,
-                    answered,
-                    total,
-                })
-            },
-        )
-        .ok();
-
-    Ok(row)
-}
-
-fn progress(conn: &Connection) -> Result<(i64, i64), String> {
-    let answered: i64 = conn
-        .query_row(
-            "SELECT COALESCE(SUM(asked), 0) FROM placement_results",
-            [],
-            |r| r.get(0),
-        )
-        .map_err(|e| format!("统计摸底进度失败: {e}"))?;
-    Ok((answered, BANDS.len() as i64 * QUESTIONS_PER_BAND))
-}
-
-/// 关闭一层。
+/// 信息量最大的就是这一点：那里答对答错各半，每一题都真正改变估计。
+/// 问第 1 名的词答对说明不了任何事，问第 40000 名答对多半是蒙的。
 ///
-/// 只关当前层——契约 §9.2② 的「下跳一层」是继续测下一层，不是终止摸底。
-fn close_band(conn: &Connection, band: i64) -> Result<(), String> {
-    // 必须 INSERT..ON CONFLICT 而非 UPDATE：一题未答的层还没有行，
-    // UPDATE 影响 0 行且不报错，关闭动作静默失效——而连错跳过恰恰
-    // 总是作用在这种从未答过题的层上
-    let close_one = |b: i64| -> Result<(), String> {
-        conn.execute(
-            "INSERT INTO placement_results (band, asked, passed, is_closed)
-             VALUES (?1, 0, 0, 1)
-             ON CONFLICT(band) DO UPDATE SET is_closed = 1",
-            [b],
-        )
-        .map_err(|e| format!("关闭频段 {b} 失败: {e}"))?;
-        Ok(())
-    };
+/// **不受学习范围约束**：范围是「想练哪本考纲」，而这里在测能力，
+/// 用全库才测得准。
+fn pick_question(conn: &Connection, theta: f64) -> Result<Option<PlacementQuestion>, String> {
+    let boundary = ability::vocabulary_rank(theta);
+    let answered = answered_count(conn)?;
 
-    close_one(band)
+    let dist = ability::distance_sql("w.frequency_rank", boundary);
+    conn.query_row(
+        &format!(
+        "SELECT w.id, w.word, w.phonetic, w.pos, w.meaning, w.frequency_rank
+           FROM words w
+          WHERE w.frequency_rank IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM placement_asked a WHERE a.word_id = w.id)
+          ORDER BY {dist}
+          LIMIT 1"
+        ),
+        [],
+        |r| {
+            Ok(PlacementQuestion {
+                word_id: r.get(0)?,
+                word: r.get(1)?,
+                phonetic: r.get(2)?,
+                pos: r.get(3)?,
+                meaning: r.get(4)?,
+                frequency_rank: r.get(5)?,
+                answered,
+                total: ITEMS,
+            })
+        },
+    )
+    .map(Some)
+    .or_else(|e| match e {
+        rusqlite::Error::QueryReturnedNoRows => Ok(None),
+        other => Err(format!("挑选摸底题失败: {other}")),
+    })
 }
 
 // ─────────────────────────────────────────────
@@ -135,240 +117,103 @@ fn close_band(conn: &Connection, band: i64) -> Result<(), String> {
 #[tauri::command]
 pub fn get_placement_question(db: State<Db>) -> Result<Option<PlacementQuestion>, String> {
     let conn = lock(&db)?;
-
-    settings::set(&conn, "placement_stage", "1")?;
-
-    let Some(band) = active_band(&conn)? else {
-        return Ok(None);
-    };
-
-    match pick_question(&conn, band)? {
-        Some(q) => Ok(Some(q)),
-        None => {
-            // 该层的词已出完却还没关闭——词库中此层词数不足 12。
-            // 关掉它继续下一层，而不是卡在这里返回空
-            close_band(&conn, band)?;
-            let next = active_band(&conn)?;
-            match next {
-                Some(b) => pick_question(&conn, b),
-                None => Ok(None),
-            }
-        }
-    }
+    next_question(&conn)
 }
 
-#[derive(Debug, Serialize)]
-pub struct AnswerOutcome {
-    /// 该层是否就此结束（题量满或连错触发）
-    pub band_closed: bool,
-    /// 整个摸底是否已结束，可以调 finalize 了
-    pub placement_done: bool,
+/// 与 command 分开，测试才打得到**真代码**上。
+pub fn next_question(conn: &Connection) -> Result<Option<PlacementQuestion>, String> {
+    settings::set(conn, "placement_stage", "1")?;
+
+    let answered = answered_count(conn)?;
+    if answered >= ITEMS {
+        return Ok(None);
+    }
+
+    // 第一题之前把能力重置到摸底起点：先验弱得多，好让真实作答快速带走估计
+    // （见 ability::PLACEMENT_PRIOR_INFORMATION）
+    if answered == 0 {
+        player_stats::set_ability(conn, &ability::Ability::for_placement())?;
+    }
+
+    let theta = player_stats::ability(conn)?.theta;
+    pick_question(conn, theta)
 }
 
 /// 提交一题的作答。
 ///
-/// 收束规则完全在后端判定，返回值只告诉前端「这层结束了没有」。
-/// 把「连错 3 次」这类阈值暴露给前端，等于让同一条产品规则活在两个地方。
+/// 与日常作答喂给 θ 的是**同一种观测**——都是没教过就直接考。区别只是摸底
+/// 把它们集中在两分钟里问完。
 #[tauri::command]
 pub fn submit_placement_answer(
     db: State<Db>,
     word_id: i64,
-    band: i64,
     is_correct: bool,
     reaction_ms: i64,
 ) -> Result<AnswerOutcome, String> {
-    if !BANDS.contains(&band) {
-        return Err(format!("band 必须在 1..5，收到 {band}"));
-    }
+    let mut conn = lock(&db)?;
+    record_answer(&mut conn, word_id, is_correct, reaction_ms)
+}
+
+/// 与 command 分开，测试才打得到**真代码**上。
+/// 在测试里自己重写一遍更新逻辑的话，改坏生产代码它一声不吭。
+pub fn record_answer(
+    conn: &mut Connection,
+    word_id: i64,
+    is_correct: bool,
+    reaction_ms: i64,
+) -> Result<AnswerOutcome, String> {
     if reaction_ms < 0 {
         return Err(format!("reaction_ms 不能为负，收到 {reaction_ms}"));
     }
 
-    let conn = lock(&db)?;
-    let passed = i64::from(is_pass(is_correct, reaction_ms));
-    // 连错计数按「是否答对」而非「是否算已会」累加：答对但超时说明还有印象，
-    // 不该和完全不认识同等对待
-    let miss_delta = i64::from(!is_correct);
+    let rank: Option<i64> = conn
+        .query_row(
+            "SELECT frequency_rank FROM words WHERE id = ?1",
+            [word_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| format!("读取词频排名失败: {e}"))?;
+    let Some(rank) = rank else {
+        return Err(format!("词 {word_id} 没有词频排名，不该作为摸底题出现"));
+    };
 
-    conn.execute(
+    let tx = conn
+        .transaction()
+        .map_err(|e| format!("开启摸底事务失败: {e}"))?;
+
+    tx.execute(
         "INSERT INTO placement_asked (word_id, asked_at) VALUES (?1, ?2)
          ON CONFLICT(word_id) DO NOTHING",
         rusqlite::params![word_id, clock::now()],
     )
     .map_err(|e| format!("记录已出题失败: {e}"))?;
 
-    conn.execute(
-        "INSERT INTO placement_results (band, asked, passed, consecutive_miss)
-         VALUES (?1, 1, ?2, ?3)
-         ON CONFLICT(band) DO UPDATE SET
-           asked = asked + 1,
-           passed = passed + ?2,
-           -- 答对即清零：连错要求的是「连续」
-           consecutive_miss = CASE WHEN ?3 = 1 THEN consecutive_miss + 1 ELSE 0 END",
-        rusqlite::params![band, passed, miss_delta],
-    )
-    .map_err(|e| format!("更新摸底统计失败: {e}"))?;
+    let prior = player_stats::ability(&tx)?;
+    let next = ability::update(prior, rank, is_correct);
+    player_stats::set_ability(&tx, &next)?;
+    let vocab = player_stats::vocab_from_ability(&tx, &next)?;
+    player_stats::set_vocab_estimate(&tx, vocab)?;
 
-    let (asked, misses): (i64, i64) = conn
-        .query_row(
-            "SELECT asked, consecutive_miss FROM placement_results WHERE band = ?1",
-            [band],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .map_err(|e| format!("读取摸底统计失败: {e}"))?;
-
-    // 连错达上限只结束**当前层**，继续测下一层（契约 §9.2②「下跳一层」）。
-    //
-    // 早期实现在此跳过所有更难的层，实测把一次摸底压缩到 6 题就收场：
-    // band 1 是最高频词，开头几题手生就断送整场测试，最终判定词汇量为 0、
-    // 3657 个词全按新词排队。样本太小，结论不可信。
-    let aborted = misses >= CONSECUTIVE_MISS_LIMIT;
-    let filled = asked >= QUESTIONS_PER_BAND;
-
-    if aborted || filled {
-        close_band(&conn, band)?;
-    }
+    let answered = answered_count(&tx)?;
+    tx.commit().map_err(|e| format!("提交摸底事务失败: {e}"))?;
 
     Ok(AnswerOutcome {
-        band_closed: aborted || filled,
-        placement_done: active_band(&conn)?.is_none(),
+        answered,
+        total: ITEMS,
+        placement_done: answered >= ITEMS,
     })
 }
 
-/// contracts §3.6：结算摸底并批量预分级。
-#[tauri::command]
-pub fn finalize_placement(db: State<Db>) -> Result<PlacementOutcome, String> {
-    let mut conn = db
-        .0
-        .lock()
-        .map_err(|e| format!("获取数据库锁失败: {e}"))?;
-
-    // 各层掌握率
-    let mut pass_rates: Vec<(i64, f64)> = Vec::new();
-    for band in BANDS {
-        let row: Option<(i64, i64)> = conn
-            .query_row(
-                "SELECT asked, passed FROM placement_results WHERE band = ?1",
-                [band],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .ok();
-        let rate = match row {
-            Some((asked, passed)) if asked > 0 => passed as f64 / asked as f64,
-            // 未测的层按 0：没有证据就不算掌握
-            _ => 0.0,
-        };
-        pass_rates.push((band, rate));
-    }
-
-    // 各层词数（仅摸底范围）
-    let mut band_totals: Vec<(i64, i64)> = Vec::new();
-    for band in BANDS {
-        let total: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM words WHERE level = ?1 AND frequency_band = ?2",
-                rusqlite::params![PLACEMENT_LEVEL, band],
-                |r| r.get(0),
-            )
-            .map_err(|e| format!("统计频段 {band} 词数失败: {e}"))?;
-        band_totals.push((band, total));
-    }
-
-    let vocab_estimate = estimate_vocab(&band_totals, &pass_rates);
-
-    // 批量预分级必须整体成败：中途失败会留下一半已分级、一半未分级的库，
-    // 而 placement_stage 无从表达这种中间态
-    let tx = conn
-        .transaction()
-        .map_err(|e| format!("开启预分级事务失败: {e}"))?;
-
-    let mut graded_review = 0i64;
-    let mut graded_learning = 0i64;
-    let mut skipped_new = 0i64;
-    let mut rng = Lcg(0x9E37_79B9);
-
-    for (band, rate) in &pass_rates {
-        let grade = grade_for(*rate);
-        if grade == PreGrade::New {
-            let n: i64 = tx
-                .query_row(
-                    "SELECT COUNT(*) FROM words WHERE level = ?1 AND frequency_band = ?2",
-                    rusqlite::params![PLACEMENT_LEVEL, band],
-                    |r| r.get(0),
-                )
-                .map_err(|e| format!("统计频段 {band} 失败: {e}"))?;
-            skipped_new += n;
-            continue;
-        }
-
-        let ids: Vec<i64> = {
-            let mut stmt = tx
-                .prepare(
-                    "SELECT w.id FROM words w
-                     WHERE w.level = ?1 AND w.frequency_band = ?2
-                       AND NOT EXISTS (SELECT 1 FROM word_states s WHERE s.word_id = w.id)",
-                )
-                .map_err(|e| format!("准备预分级查询失败: {e}"))?;
-            let rows = stmt
-                .query_map(rusqlite::params![PLACEMENT_LEVEL, band], |r| r.get(0))
-                .map_err(|e| format!("查询待分级词失败: {e}"))?;
-            rows.collect::<Result<_, _>>()
-                .map_err(|e| format!("读取待分级词失败: {e}"))?
-        };
-
-        let (lo, hi) = stability_range(*band);
-        for id in ids {
-            // 逐词抖动而非整层同值——同值会让它们在同一天集中到期
-            let stability = lo + rng.next_f64() * (hi - lo);
-            let state = word_states::WordState {
-                word_id: id,
-                difficulty: 5.0,
-                stability,
-                due_at: clock::due_in_days(stability),
-                fsrs_state: if grade == PreGrade::Review { 2 } else { 1 },
-                app_state: grade.app_state().to_string(),
-                reps: 0,
-                lapses: 0,
-                question_level: grade.question_level(),
-                reinforce_streak: 0,
-                last_review_at: None,
-                mastered_at: None,
-            };
-            word_states::upsert(&tx, &state)?;
-
-            match grade {
-                PreGrade::Review => graded_review += 1,
-                PreGrade::Learning => graded_learning += 1,
-                PreGrade::New => {}
-            }
-        }
-    }
-
-    settings::set(&tx, "placement_stage", "2")?;
-    crate::db::repo::player_stats::set_vocab_estimate(&tx, vocab_estimate)?;
-
-    tx.commit()
-        .map_err(|e| format!("提交预分级事务失败: {e}"))?;
-
-    Ok(PlacementOutcome {
-        vocab_estimate,
-        pass_rates: pass_rates.iter().map(|(_, r)| *r).collect(),
-        graded_review,
-        graded_learning,
-        skipped_new,
-    })
-}
-
-/// 线性同余伪随机数。
+/// contracts §3.6：结束摸底，返回能力概览。
 ///
-/// 只用于 stability 抖动，无需密码学强度；自带实现避免引入 rand 依赖。
-struct Lcg(u64);
-
-impl Lcg {
-    fn next_f64(&mut self) -> f64 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1);
-        ((self.0 >> 11) as f64) / ((1u64 << 53) as f64)
-    }
+/// 返回的就是设置页那张卡的内容——摸底不再产出一套自己的数字，
+/// 它和日常作答更新的是同一个估计。
+#[tauri::command]
+pub fn finalize_placement(db: State<Db>) -> Result<AbilityOverview, String> {
+    let conn = lock(&db)?;
+    settings::set(&conn, "placement_stage", "2")?;
+    let a = player_stats::ability(&conn)?;
+    crate::commands::stats::overview_of(&conn, &a)
 }
 
 #[cfg(test)]
@@ -378,399 +223,258 @@ mod tests {
     use crate::db::repo::words;
     use crate::test_support::in_memory_db;
 
-    /// 造词。词形必须是纯字母——契约 §8 的 `^[a-z][a-z\-' ]*$` 会拒掉带数字的，
-    /// 用 `w1x0` 这类命名会让整批数据被拒，测试跑在空库上却仍然「通过」。
-    fn make_word(prefix: &str, n: usize) -> String {
-        let hi = (b'a' + (n / 26) as u8) as char;
-        let lo = (b'a' + (n % 26) as u8) as char;
-        format!("{prefix}{hi}{lo}")
-    }
-
-    fn seed(junior_per_band: usize) -> Connection {
+    /// 造一个词频跨度覆盖整个量程的词库。
+    fn db() -> Connection {
         let mut conn = in_memory_db();
         migrations::run(&mut conn).unwrap();
-
-        let mut items = Vec::new();
-        for band in 1..=5i64 {
-            let prefix = format!("jun{}", (b'a' + band as u8 - 1) as char);
-            for i in 0..junior_per_band {
-                let w = make_word(&prefix, i);
-                items.push(words::WordImport {
-                    word: w.clone(),
+        let items: Vec<words::WordImport> = (0..60)
+            .map(|i| {
+                let w = format!("pw{}{}", (b'a' + (i / 26) as u8) as char, (b'a' + (i % 26) as u8) as char);
+                words::WordImport {
+                    example_1: format!("A {w} appears."),
+                    word: w,
                     phonetic: "/w/".into(),
                     pos: "n.".into(),
-                    meaning: format!("初中释义{band}-{i}"),
-                    example_1: format!("A {w} appears here."),
+                    meaning: format!("释义{i}"),
                     example_2: String::new(),
-                    level: "junior".into(),
-                    frequency_band: band,
-                    frequency_rank: None,
+                    level: "senior".into(),
+                    frequency_band: 1,
+                    // 第 1 名到第 32768 名，等比铺开
+                    frequency_rank: Some(1 << (i % 16)),
                     zone: "newbie".into(),
                     source_edition: String::new(),
-                });
-            }
-        }
-        // 高中词不参与摸底（§9.2①）
-        for i in 0..10 {
-            let w = make_word("sen", i);
-            items.push(words::WordImport {
-                word: w.clone(),
-                phonetic: "/w/".into(),
-                pos: "n.".into(),
-                meaning: format!("高中释义{i}"),
-                example_1: format!("A {w} appears here."),
-                example_2: String::new(),
-                level: "senior".into(),
-                frequency_band: 1,
-                frequency_rank: None,
-                zone: "grass".into(),
-                source_edition: String::new(),
-            });
-        }
-
-        let outcome = words::import(&mut conn, &items).unwrap();
-        assert!(
-            outcome.rejected.is_empty(),
-            "测试数据未通过契约校验，测试会跑在空库上：{:?}",
-            outcome.rejected
-        );
+                }
+            })
+            .collect();
+        assert!(words::import(&mut conn, &items).unwrap().rejected.is_empty());
         conn
     }
 
-    fn answer(conn: &Connection, band: i64, word_id: i64, pass: bool) {
-        let passed = i64::from(pass);
-        conn.execute(
-            "INSERT INTO placement_asked (word_id, asked_at) VALUES (?1, '2026-08-06T00:00:00Z')
-             ON CONFLICT(word_id) DO NOTHING",
-            [word_id],
+    /// 走真正的 `next_question`，绕开的只是 tauri 的 State
+    fn ask(conn: &Connection) -> Option<PlacementQuestion> {
+        next_question(conn).unwrap()
+    }
+
+    /// 走真正的 `record_answer`，不在测试里重写一遍更新逻辑
+    fn answer(conn: &mut Connection, q: &PlacementQuestion, correct: bool) {
+        record_answer(conn, q.word_id, correct, 1200).unwrap();
+    }
+
+    #[test]
+    fn 取离能力边界最近的词() {
+        let conn = db();
+        let boundary = ability::vocabulary_rank(ability::PRIOR_THETA);
+
+        let q = ask(&conn).expect("应有题");
+        // 词库里离 boundary 最近的那个 2 的幂
+        let best = (0..16)
+            .map(|i| 1i64 << i)
+            .min_by_key(|r| (r - boundary).abs())
+            .unwrap();
+        // 问第 1 名的词答对说明不了任何事，问第 32768 名答对多半是蒙的。
+        // 信息量最大的是边界附近
+        assert_eq!(q.frequency_rank, best, "应取离边界最近的难度");
+    }
+
+    #[test]
+    fn 同一个词不会问两次() {
+        let mut conn = db();
+
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..12 {
+            let q = ask(&conn).expect("应有题");
+            assert!(seen.insert(q.word_id), "词 {} 被重复出题", q.word);
+            answer(&mut conn, &q, true);
+        }
+    }
+
+    #[test]
+    fn 答对提升估计答错降低估计() {
+        let mut conn = db();
+        let before = player_stats::ability(&conn).unwrap().theta;
+
+        let q = ask(&conn).expect("应有题");
+        answer(&mut conn, &q, true);
+        let after_right = player_stats::ability(&conn).unwrap().theta;
+        assert!(after_right > before);
+
+        let q = ask(&conn).expect("应有题");
+        answer(&mut conn, &q, false);
+        assert!(player_stats::ability(&conn).unwrap().theta < after_right);
+    }
+
+    #[test]
+    fn 一路答对会走到高难度题() {
+        let mut conn = db();
+        let first = ask(&conn).unwrap().frequency_rank;
+
+        for _ in 0..10 {
+            let q = ask(&conn).expect("应有题");
+            answer(&mut conn, &q, true);
+        }
+        let now = ask(&conn).unwrap().frequency_rank;
+
+        // 楼梯法的核心：答对就往难处走。不走的话 20 题全在同一个难度上，
+        // 等于问了 20 遍同一个问题
+        assert!(now > first, "连续答对后应出更难的题（{first} → {now}）");
+    }
+
+    #[test]
+    fn 一路答错会走到低难度题() {
+        let mut conn = db();
+        let first = ask(&conn).unwrap().frequency_rank;
+
+        for _ in 0..10 {
+            let q = ask(&conn).expect("应有题");
+            answer(&mut conn, &q, false);
+        }
+        assert!(ask(&conn).unwrap().frequency_rank < first, "连续答错后应出更简单的题");
+    }
+
+    #[test]
+    fn 摸底不写入任何词状态() {
+        let mut conn = db();
+        for _ in 0..10 {
+            let q = ask(&conn).expect("应有题");
+            answer(&mut conn, &q, true);
+        }
+
+        // 原设计预建约 1438 条 word_states，那些词因此被挡在新词队列之外，
+        // 依据只是一次频段级的猜测。摸底答对一次不等于掌握——
+        // 真要跳过某个词，让 θ 去判
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM word_states", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0, "摸底不该预建词状态");
+    }
+
+    #[test]
+    fn 拒绝负的反应时间() {
+        let mut conn = db();
+        assert!(record_answer(&mut conn, 1, true, -1).is_err());
+    }
+
+    #[test]
+    fn 无排名的词提交时报错而不是静默跳过() {
+        let mut conn = db();
+        conn.execute("UPDATE words SET frequency_rank = NULL WHERE id = 1", []).unwrap();
+        // 挑题时已经排除了无排名的词，走到这里说明有别的路径把它塞了进来。
+        // 静默跳过会让摸底少一次观测且无人知晓
+        assert!(record_answer(&mut conn, 1, true, 900).is_err());
+    }
+
+    #[test]
+    fn 提交后返回的已答数与总题数正确() {
+        let mut conn = db();
+        let q = ask(&conn).unwrap();
+        let out = record_answer(&mut conn, q.word_id, true, 900).unwrap();
+        assert_eq!((out.answered, out.total, out.placement_done), (1, ITEMS, false));
+    }
+
+    #[test]
+    fn 答满题数后标记完成() {
+        let mut conn = db();
+        let mut last = None;
+        for _ in 0..ITEMS {
+            let q = ask(&conn).expect("应有题");
+            last = Some(record_answer(&mut conn, q.word_id, true, 900).unwrap());
+        }
+        assert!(last.unwrap().placement_done, "答满 {ITEMS} 题应标记完成");
+    }
+
+    #[test]
+    fn 无词频排名的词不会被出题() {
+        let conn = db();
+        conn.execute("UPDATE words SET frequency_rank = NULL", []).unwrap();
+        // 难度未知的词问了也不知道说明什么
+        assert!(ask(&conn).is_none(), "全库无排名时不该出题");
+    }
+
+    #[test]
+    fn 首题之前把能力重置到摸底起点() {
+        let conn = db();
+        // 先塞一个和摸底起点完全不同的估计
+        player_stats::set_ability(
+            &conn,
+            &ability::Ability { theta: 14.0, information: 9.0, observations: 99 },
         )
         .unwrap();
-        conn.execute(
-            "INSERT INTO placement_results (band, asked, passed) VALUES (?1, 1, ?2)
-             ON CONFLICT(band) DO UPDATE SET asked = asked + 1, passed = passed + ?2",
-            rusqlite::params![band, passed],
-        )
-        .unwrap();
+
+        ask(&conn).expect("应有题");
+
+        let a = player_stats::ability(&conn).unwrap();
+        // 不重置的话，摸底会从一个陈旧的强估计出发——20 题根本推不动它，
+        // 等于白测
+        assert_eq!(a.theta, ability::PRIOR_THETA);
+        assert_eq!(a.information, ability::PLACEMENT_PRIOR_INFORMATION);
+        assert_eq!(a.observations, 0);
     }
 
     #[test]
-    fn 出题只覆盖初中词() {
-        let conn = seed(20);
-        for band in 1..=5 {
-            let q = pick_question(&conn, band).unwrap();
-            let q = q.expect("应能取到题");
-            assert!(
-                q.word.starts_with("jun"),
-                "取到了非初中词 {}——§9.2① 要求摸底范围仅 junior",
-                q.word
-            );
-            assert_eq!(q.band, band);
-        }
+    fn 中途不再重置已经积累的估计() {
+        let mut conn = db();
+        let q = ask(&conn).expect("应有题");
+        record_answer(&mut conn, q.word_id, true, 900).unwrap();
+        let after_first = player_stats::ability(&conn).unwrap();
+
+        ask(&conn).expect("应有题");
+
+        // 每取一题就重置的话，摸底永远停在第一题的水平
+        assert_eq!(player_stats::ability(&conn).unwrap(), after_first);
     }
 
     #[test]
-    fn 已出过的词不再重复出现() {
-        let conn = seed(2);
-        let first = pick_question(&conn, 1).unwrap().unwrap();
-        answer(&conn, 1, first.word_id, true);
-
-        let second = pick_question(&conn, 1).unwrap().unwrap();
-        assert_ne!(second.word_id, first.word_id);
+    fn 答满题数后不再出题() {
+        let mut conn = db();
+        for _ in 0..ITEMS {
+            let q = ask(&conn).expect("应有题");
+            record_answer(&mut conn, q.word_id, true, 900).unwrap();
+        }
+        assert!(ask(&conn).is_none(), "答满 {ITEMS} 题后应结束");
     }
 
     #[test]
-    fn 该层词不足时返回空而非报错() {
-        let conn = seed(1);
-        let q = pick_question(&conn, 1).unwrap().unwrap();
-        answer(&conn, 1, q.word_id, true);
-        assert!(pick_question(&conn, 1).unwrap().is_none());
-    }
-
-    #[test]
-    fn 连续答错只结束当前层不终止摸底() {
-        let conn = seed(20);
-        close_band(&conn, 1).unwrap();
-        close_band(&conn, 2).unwrap();
-
-        // 更难的层必须继续测。早期实现在此跳过全部，导致一次摸底
-        // 只答 6 题就收场，样本小到结论不可信
-        assert_eq!(
-            active_band(&conn).unwrap(),
-            Some(3),
-            "关闭 band 2 后应继续测 band 3，而非终止摸底"
-        );
-        for band in 3..=5 {
-            let closed: Option<i64> = conn
-                .query_row(
-                    "SELECT is_closed FROM placement_results WHERE band = ?1",
-                    [band],
-                    |r| r.get(0),
-                )
-                .ok();
-            assert_ne!(closed, Some(1), "band {band} 不该被提前关闭");
-        }
-    }
-
-    #[test]
-    fn 连错计数被答对清零() {
-        let conn = seed(20);
-        let bump = |correct: bool| {
-            let miss = i64::from(!correct);
-            conn.execute(
-                "INSERT INTO placement_results (band, asked, passed, consecutive_miss)
-                 VALUES (1, 1, 0, ?1)
-                 ON CONFLICT(band) DO UPDATE SET
-                   asked = asked + 1,
-                   consecutive_miss = CASE WHEN ?1 = 1 THEN consecutive_miss + 1 ELSE 0 END",
-                [miss],
-            )
-            .unwrap();
-            conn.query_row(
-                "SELECT consecutive_miss FROM placement_results WHERE band = 1",
-                [],
-                |r| r.get::<_, i64>(0),
-            )
-            .unwrap()
-        };
-
-        assert_eq!(bump(false), 1);
-        assert_eq!(bump(false), 2);
-        // 答对必须清零——规则要求的是「连续」答错，不是累计答错
-        assert_eq!(bump(true), 0);
-        assert_eq!(bump(false), 1);
-    }
-
-    #[test]
-    fn 关闭单层不影响其他层() {
-        let conn = seed(20);
-        close_band(&conn, 1).unwrap();
-        assert_eq!(active_band(&conn).unwrap(), Some(2));
-    }
-
-    #[test]
-    fn 高掌握率的层被判为已复习并跳过新词队列() {
-        let mut conn = seed(20);
-        // band 1 全对 → p = 1.0 > 0.85
-        for i in 0..12 {
-            answer(&conn, 1, i + 1, true);
-        }
-        for band in 2..=5 {
-            close_band(&conn, band).unwrap();
-        }
-
-        let outcome = finalize_with(&mut conn).unwrap();
-        assert!(outcome.graded_review > 0, "band 1 应被判为已掌握");
-
-        // 这些词不应再作为新词排队
-        let new_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM words w
-                 WHERE w.frequency_band = 1 AND w.level = 'junior'
-                   AND NOT EXISTS (SELECT 1 FROM word_states s WHERE s.word_id = w.id)",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(new_count, 0, "已判定掌握的词仍会作为新词出现");
-    }
-
-    #[test]
-    fn 低掌握率的层保持新词状态() {
-        let mut conn = seed(20);
-        // band 1 全错 → p = 0
-        for i in 0..12 {
-            answer(&conn, 1, i + 1, false);
-        }
-        for band in 2..=5 {
-            close_band(&conn, band).unwrap();
-        }
-
-        let outcome = finalize_with(&mut conn).unwrap();
-        assert_eq!(outcome.graded_review, 0);
-        assert!(outcome.skipped_new > 0, "低掌握率的层应保持新词");
-    }
-
-    #[test]
-    fn 预分级的到期日分散而非集中() {
-        let mut conn = seed(40);
-        for i in 0..12 {
-            answer(&conn, 1, i + 1, true);
-        }
-        for band in 2..=5 {
-            close_band(&conn, band).unwrap();
-        }
-        finalize_with(&mut conn).unwrap();
-
-        let distinct_days: i64 = conn
-            .query_row(
-                "SELECT COUNT(DISTINCT substr(due_at, 1, 10)) FROM word_states",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        // 若全赋同一 stability，所有词会落在同一天，把每日预算彻底淹没
-        assert!(
-            distinct_days > 5,
-            "到期日只分散到 {distinct_days} 天，抖动未生效"
-        );
-    }
-
-    #[test]
-    fn 结算是原子的且置位完成标记() {
-        let mut conn = seed(20);
-        for i in 0..12 {
-            answer(&conn, 1, i + 1, true);
-        }
-        for band in 2..=5 {
-            close_band(&conn, band).unwrap();
-        }
-        finalize_with(&mut conn).unwrap();
-
+    fn 取题会把摸底标记为进行中() {
+        let conn = db();
+        ask(&conn);
         assert_eq!(
             settings::get(&conn, "placement_stage").unwrap().as_deref(),
-            Some("2")
+            Some("1")
         );
-        let est = crate::db::repo::player_stats::get(&conn).unwrap().vocab_estimate;
-        assert!(est > 0, "词汇量估算未写入");
     }
 
     #[test]
-    fn 已有学习记录的词不被预分级覆盖() {
-        let mut conn = seed(20);
-        // 先给一个词造真实学习记录
-        word_states::upsert(
-            &conn,
-            &word_states::WordState {
-                word_id: 1,
-                difficulty: 7.0,
-                stability: 42.0,
-                due_at: "2026-09-01T00:00:00Z".into(),
-                fsrs_state: 2,
-                app_state: "review".into(),
-                reps: 9,
-                lapses: 2,
-                question_level: 4,
-                reinforce_streak: 0,
-                last_review_at: Some("2026-08-01T00:00:00Z".into()),
-                mastered_at: None,
-            },
-        )
-        .unwrap();
-
-        for i in 0..12 {
-            answer(&conn, 1, i + 2, true);
-        }
-        for band in 2..=5 {
-            close_band(&conn, band).unwrap();
-        }
-        finalize_with(&mut conn).unwrap();
-
-        // 真实作答积累的进度不该被摸底的估算值抹掉
-        let s = word_states::get(&conn, 1).unwrap().unwrap();
-        assert_eq!(s.reps, 9, "已有学习记录被预分级覆盖");
-        assert_eq!(s.question_level, 4);
+    fn 摸底起点比日常先验弱() {
+        let start = ability::Ability::for_placement();
+        let daily = ability::Ability::default();
+        assert_eq!(start.theta, daily.theta);
+        // 摸底期间什么都还没教，波动不付代价——只有「多久摸到真实水平」重要
+        assert!(
+            start.information < daily.information,
+            "摸底先验 {} 应弱于日常先验 {}",
+            start.information,
+            daily.information
+        );
     }
 
-    /// 测试用：绕过 tauri::State 直接结算。
-    fn finalize_with(conn: &mut Connection) -> Result<PlacementOutcome, String> {
-        let mut pass_rates: Vec<(i64, f64)> = Vec::new();
-        for band in BANDS {
-            let row: Option<(i64, i64)> = conn
-                .query_row(
-                    "SELECT asked, passed FROM placement_results WHERE band = ?1",
-                    [band],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .ok();
-            let rate = match row {
-                Some((asked, passed)) if asked > 0 => passed as f64 / asked as f64,
-                _ => 0.0,
-            };
-            pass_rates.push((band, rate));
+    #[test]
+    fn 二十题足以离开先验() {
+        let mut conn = db();
+
+        for _ in 0..ITEMS {
+            let q = ask(&conn).expect("应有题");
+            answer(&mut conn, &q, true);
         }
+        let a = player_stats::ability(&conn).unwrap();
 
-        let mut band_totals: Vec<(i64, i64)> = Vec::new();
-        for band in BANDS {
-            let total: i64 = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM words WHERE level = ?1 AND frequency_band = ?2",
-                    rusqlite::params![PLACEMENT_LEVEL, band],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            band_totals.push((band, total));
-        }
-        let vocab_estimate = estimate_vocab(&band_totals, &pass_rates);
-
-        let tx = conn.transaction().unwrap();
-        let mut graded_review = 0i64;
-        let mut graded_learning = 0i64;
-        let mut skipped_new = 0i64;
-        let mut rng = Lcg(0x9E37_79B9);
-
-        for (band, rate) in &pass_rates {
-            let grade = grade_for(*rate);
-            if grade == PreGrade::New {
-                let n: i64 = tx
-                    .query_row(
-                        "SELECT COUNT(*) FROM words WHERE level = ?1 AND frequency_band = ?2",
-                        rusqlite::params![PLACEMENT_LEVEL, band],
-                        |r| r.get(0),
-                    )
-                    .unwrap();
-                skipped_new += n;
-                continue;
-            }
-            let ids: Vec<i64> = {
-                let mut stmt = tx
-                    .prepare(
-                        "SELECT w.id FROM words w
-                         WHERE w.level = ?1 AND w.frequency_band = ?2
-                           AND NOT EXISTS (SELECT 1 FROM word_states s WHERE s.word_id = w.id)",
-                    )
-                    .unwrap();
-                let rows = stmt
-                    .query_map(rusqlite::params![PLACEMENT_LEVEL, band], |r| r.get(0))
-                    .unwrap();
-                rows.collect::<Result<_, _>>().unwrap()
-            };
-            let (lo, hi) = stability_range(*band);
-            for id in ids {
-                let stability = lo + rng.next_f64() * (hi - lo);
-                word_states::upsert(
-                    &tx,
-                    &word_states::WordState {
-                        word_id: id,
-                        difficulty: 5.0,
-                        stability,
-                        due_at: clock::due_in_days(stability),
-                        fsrs_state: if grade == PreGrade::Review { 2 } else { 1 },
-                        app_state: grade.app_state().to_string(),
-                        reps: 0,
-                        lapses: 0,
-                        question_level: grade.question_level(),
-                        reinforce_streak: 0,
-                        last_review_at: None,
-                        mastered_at: None,
-                    },
-                )?;
-                match grade {
-                    PreGrade::Review => graded_review += 1,
-                    PreGrade::Learning => graded_learning += 1,
-                    PreGrade::New => {}
-                }
-            }
-        }
-        settings::set(&tx, "placement_stage", "2")?;
-        crate::db::repo::player_stats::set_vocab_estimate(&tx, vocab_estimate)?;
-        tx.commit().unwrap();
-
-        Ok(PlacementOutcome {
-            vocab_estimate,
-            pass_rates: pass_rates.iter().map(|(_, r)| *r).collect(),
-            graded_review,
-            graded_learning,
-            skipped_new,
-        })
+        // 纯先验时水平偏离的孩子首场难度必错。摸底的唯一职责就是避免这个
+        assert!(
+            a.theta > ability::PRIOR_THETA + 1.5,
+            "20 题全对后 θ 只到 {:.2}（先验 {:.2}）",
+            a.theta,
+            ability::PRIOR_THETA
+        );
+        // 之后的日常更新应当被压住
+        assert!(a.information > ability::PRIOR_INFORMATION);
     }
 }

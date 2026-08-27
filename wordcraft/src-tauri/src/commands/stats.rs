@@ -160,7 +160,7 @@ pub fn export_data_json(db: State<Db>) -> Result<String, String> {
 /// 能力概览：孩子的水平估到哪，重点该放在哪一段。
 ///
 /// 这是「学习范围」那个下拉框的替代品。范围不再由家长猜，而是由每天的作答
-/// 算出来——见 `ability.rs` 与契约 §10。
+/// 算出来——见 `ability.rs` 与契约 §13。
 #[derive(Debug, Serialize)]
 pub struct AbilityOverview {
     /// 估计的词汇量：词库里排名在掌握边界之前的词数
@@ -183,7 +183,7 @@ pub struct AbilityOverview {
 
 /// 逐词分类而不是用 SQL 的区间条件：分层只该有一份定义（`ability::tier`）。
 /// SQL 里抄一份边界，改了阈值这里就开始说谎。
-fn overview_of(conn: &Connection, a: &ability::Ability) -> Result<AbilityOverview, String> {
+pub fn overview_of(conn: &Connection, a: &ability::Ability) -> Result<AbilityOverview, String> {
     let mut stmt = conn
         .prepare(
             "SELECT w.frequency_rank,

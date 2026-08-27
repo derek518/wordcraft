@@ -18,7 +18,7 @@ export type AppState = 'new' | 'learning' | 'reinforcing' | 'review' | 'mastered
 export type SessionType = 'morning' | 'noon' | 'evening' | 'free'
 
 /** 排队来源，用于诊断与统计 */
-export type QueueSource = 'reinforcing' | 'due_review' | 'placement_probe' | 'new'
+export type QueueSource = 'reinforcing' | 'due_review' | 'new'
 
 /** `get_session_queue` 的返回项 */
 export interface QueueItem {

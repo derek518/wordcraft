@@ -163,8 +163,13 @@ pub fn ability(conn: &Connection) -> Result<Ability, String> {
         )
         .map_err(|e| format!("读取能力估计失败: {e}"))?;
 
+    // 判据只看 information：schema 默认 0，写过就一定 > 0。
+    //
+    // 先前还要求 `observations > 0`，于是摸底起点（观测数为 0、信息量 0.5）
+    // 存进去读出来又变回日常先验 2.0——摸底那 20 题推的是一个比预期强四倍的
+    // 先验，等于白测，而且没有任何东西会报错
     Ok(match theta {
-        Some(t) if observations > 0 && information > 0.0 => Ability {
+        Some(t) if information > 0.0 => Ability {
             theta: t,
             information,
             observations,
@@ -319,5 +324,31 @@ mod tests {
         let month = clock::current_month();
         assert!(grant_monthly_if_due(&conn, &month).unwrap());
         assert!(!grant_monthly_if_due(&conn, &month).unwrap());
+    }
+
+    #[test]
+    fn 从未设置过时返回日常先验() {
+        let conn = db();
+        assert_eq!(ability(&conn).unwrap(), Ability::default());
+    }
+
+    #[test]
+    fn 观测数为零的估计也能读回来() {
+        let conn = db();
+        let start = Ability::for_placement();
+        set_ability(&conn, &start).unwrap();
+
+        // 摸底起点的观测数就是 0。若加载条件要求 observations > 0，
+        // 它会被当成「没设过」而回落到日常先验——那份先验强四倍，
+        // 20 题根本推不动，摸底等于白做，而且没有任何东西会报错
+        assert_eq!(ability(&conn).unwrap(), start);
+    }
+
+    #[test]
+    fn 能力估计可往返() {
+        let conn = db();
+        let a = Ability { theta: 12.75, information: 4.25, observations: 33 };
+        set_ability(&conn, &a).unwrap();
+        assert_eq!(ability(&conn).unwrap(), a);
     }
 }

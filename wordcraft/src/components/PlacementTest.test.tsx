@@ -9,25 +9,24 @@ vi.mock('../core/sound', () => ({
   playSessionComplete: vi.fn(),
 }))
 
-function q(id: number, band = 1): api.PlacementQuestion {
+function q(id: number, rank = 2500): api.PlacementQuestion {
   return {
     word_id: id,
     word: `w${id}`,
     phonetic: '/w/',
     pos: 'n.',
     meaning: `释义${id}`,
-    band,
+    frequency_rank: rank,
     answered: 0,
-    total: 10,
+    total: 20,
   }
 }
 
-const OUTCOME: api.PlacementOutcome = {
-  vocab_estimate: 1200,
-  pass_rates: [0.9, 0.7, 0.4, 0.1, 0],
-  graded_review: 300,
-  graded_learning: 200,
-  skipped_new: 100,
+const OUTCOME: api.AbilityOverview = {
+  vocabulary: 1200, vocabulary_low: 900, vocabulary_high: 1600,
+  frontier_from: 400, frontier_to: 3000,
+  known: 350, frontier: 2100, too_hard: 2800,
+  frontier_untouched: 1980, observations: 20,
 }
 
 async function settle() {
@@ -60,7 +59,7 @@ describe('摸底分级', () => {
     // 提前收尾，词汇量估算就基于不完整的样本
     expect(get).toHaveBeenCalled()
     expect(fin).toHaveBeenCalledTimes(1)
-    expect(document.body.textContent).toContain('1200')
+    expect(document.body.textContent).toContain('1,200')
   })
 
   it('答完一题继续向后端要下一题，而不是本地推进', async () => {
@@ -69,7 +68,7 @@ describe('摸底分级', () => {
       .mockResolvedValueOnce(q(2, 2))
       .mockResolvedValue(null)
     const submit = vi.spyOn(api, 'submitPlacementAnswer')
-      .mockResolvedValue({ band_closed: false, placement_done: false })
+      .mockResolvedValue({ answered: 1, total: 20, placement_done: false })
 
     render(<PlacementTest onFinish={() => {}} />)
     await settle()
@@ -82,7 +81,7 @@ describe('摸底分级', () => {
     })
     await settle()
 
-    expect(submit).toHaveBeenCalledWith(1, 1, true, expect.any(Number))
+    expect(submit).toHaveBeenCalledWith(1, true, expect.any(Number))
     // 频段的开合由后端决定，前端只负责问「下一题是什么」
     expect(get.mock.calls.length).toBeGreaterThan(1)
   })
@@ -92,7 +91,7 @@ describe('摸底分级', () => {
       .mockResolvedValueOnce(q(1))
       .mockResolvedValue(null)
     const submit = vi.spyOn(api, 'submitPlacementAnswer')
-      .mockResolvedValue({ band_closed: true, placement_done: false })
+      .mockResolvedValue({ answered: 1, total: 20, placement_done: false })
 
     render(<PlacementTest onFinish={() => {}} />)
     await settle()
@@ -103,13 +102,13 @@ describe('摸底分级', () => {
     await settle()
 
     // 答错是摸底最重要的信号——它决定频段何时关闭
-    expect(submit).toHaveBeenCalledWith(1, 1, false, expect.any(Number))
+    expect(submit).toHaveBeenCalledWith(1, false, expect.any(Number))
   })
 
   it('同一题重复点击只提交一次', async () => {
     vi.spyOn(api, 'getPlacementQuestion').mockResolvedValueOnce(q(1)).mockResolvedValue(null)
     const submit = vi.spyOn(api, 'submitPlacementAnswer')
-      .mockResolvedValue({ band_closed: false, placement_done: false })
+      .mockResolvedValue({ answered: 1, total: 20, placement_done: false })
 
     render(<PlacementTest onFinish={() => {}} />)
     await settle()

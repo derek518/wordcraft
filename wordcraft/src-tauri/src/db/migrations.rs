@@ -87,6 +87,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "ability",
         sql: include_str!("migrations/014_ability.sql"),
     },
+    Migration {
+        version: 15,
+        name: "placement_by_ability",
+        sql: include_str!("migrations/015_placement_by_ability.sql"),
+    },
 ];
 
 /// 执行所有未应用的迁移，返回本次实际应用的版本号。
@@ -271,7 +276,6 @@ mod tests {
         ("card_collection", &["card_id", "count", "first_at", "is_new"]),
         ("settings", &["key", "value"]),
         // migration 003：摸底分级进度，支持分两次完成
-        ("placement_results", &["band", "asked", "passed", "is_closed", "consecutive_miss"]),
         ("placement_asked", &["word_id", "asked_at"]),
         // migration 006：家园建造
         ("block_inventory", &["block_type", "owned", "placed"]),
@@ -418,7 +422,7 @@ mod tests {
         let first = run(&mut conn).expect("首次迁移失败");
         assert_eq!(
             first,
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
             "首次应用全部迁移"
         );
 

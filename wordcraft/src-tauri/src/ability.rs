@@ -76,6 +76,25 @@ pub const PRIOR_THETA: f64 = 11.29; // log2(2500)
 /// 一会儿简单一会儿难得离谱」。取 4.0 又要上百次才显现真实水平。
 pub const PRIOR_INFORMATION: f64 = 2.0;
 
+/// 摸底期间的先验信息量，比日常的弱得多。
+///
+/// 日常用 `PRIOR_INFORMATION = 2.0` 是为了压住波动——估计乱跳意味着孩子那一场
+/// 练到错误难度的词。摸底时**什么都还没教**，波动不付任何代价，只有「多久能
+/// 摸到真实水平」是重要的。
+///
+/// 模拟（先验第 2500 名，20 题，估计落在真值 ±50% 内的比例）：
+///
+/// ```text
+/// 摸底先验   真实 800   1500   4000   8000
+///    2.0        75%     96%    98%     74%   ← 两端偏弱
+///    1.0        82%     94%    96%     86%
+///    0.5        86%     90%    93%     90%   ← 取这个，四档均衡
+///   0.25        84%     92%    88%     90%
+/// ```
+///
+/// 20 题之后信息量约 3.0，已高于日常先验，之后的更新自然被压住。
+pub const PLACEMENT_PRIOR_INFORMATION: f64 = 0.5;
+
 /// θ 的取值范围：第 1 名到第 65536 名。
 const THETA_MIN: f64 = 0.0;
 const THETA_MAX: f64 = 16.0;
@@ -94,6 +113,17 @@ pub struct Ability {
     pub information: f64,
     /// 参与估计的观测数（仅首次作答）
     pub observations: i64,
+}
+
+impl Ability {
+    /// 摸底起点。先验同上，但信息量弱得多——见 `PLACEMENT_PRIOR_INFORMATION`。
+    pub fn for_placement() -> Self {
+        Self {
+            theta: PRIOR_THETA,
+            information: PLACEMENT_PRIOR_INFORMATION,
+            observations: 0,
+        }
+    }
 }
 
 impl Default for Ability {
@@ -206,6 +236,21 @@ pub fn standard_error(information: f64) -> f64 {
 /// θ 对应的词频排名边界：排名在此之前的词大概率已经会。
 pub fn vocabulary_rank(theta: f64) -> i64 {
     theta.exp2().clamp(1.0, i64::MAX as f64).round() as i64
+}
+
+/// 「离能力边界的远近」的 SQL 排序表达式（越小越近）。
+///
+/// 难度是 `log2(排名)`，所以远近该按**对数**距离算。用线性的
+/// `ABS(rank - boundary)` 会系统性偏向简单词：边界在第 2500 名时，
+/// `|1024-2500| = 1476` 小于 `|4096-2500| = 1596`，于是选了第 1024 名——
+/// 而在 log 尺度上第 4096 名近得多（0.71 对 1.29）。
+///
+/// 这里用 `r/b + b/r` 而不是 log：它和 `|log r - log b|` 同增同减（对正数
+/// 而言），且不需要 SQLite 的数学函数扩展——rusqlite 捆绑的构建没有开
+/// `SQLITE_ENABLE_MATH_FUNCTIONS`，`log2()` 在运行时才会报 no such function。
+pub fn distance_sql(column: &str, boundary: i64) -> String {
+    let b = boundary.max(1);
+    format!("({column} * 1.0 / {b} + {b} * 1.0 / {column})")
 }
 
 #[cfg(test)]

@@ -43,7 +43,6 @@ const TABLES: &[&str] = &[
     "block_grants",        //
     "word_states",         // → words
     "placement_asked",     // → words
-    "placement_results",   //
     "daily_records",       //
     "season_settlements",  //
 ];
@@ -128,7 +127,7 @@ pub fn reset_learning_data(conn: &mut Connection) -> Result<ResetSummary, String
     Ok(summary)
 }
 
-/// contracts §3.6：清空学习数据。返回清空明细而非 `Ok(())`——
+/// contracts §3.8：清空学习数据。返回清空明细而非 `Ok(())`——
 /// 这个操作不可逆，用户有权知道到底动了什么。
 #[tauri::command]
 pub fn reset_learning_data_cmd(db: State<Db>) -> Result<ResetSummary, String> {

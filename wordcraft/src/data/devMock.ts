@@ -256,6 +256,14 @@ const HANDLERS: Record<string, (args?: Record<string, unknown>) => unknown> = {
     frontier_untouched: 2988, observations: 42,
   }),
 
+  get_placement_question: () => null,
+  finalize_placement: () => ({
+    vocabulary: 1200, vocabulary_low: 900, vocabulary_high: 1600,
+    frontier_from: 400, frontier_to: 3000,
+    known: 350, frontier: 2100, too_hard: 2800,
+    frontier_untouched: 1980, observations: 20,
+  }),
+
   search_words: () => [],
   play_word_audio: () => null,
   postpone_session: () => ({ remaining: 2 }),

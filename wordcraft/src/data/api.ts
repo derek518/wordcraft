@@ -116,21 +116,15 @@ export interface PlacementQuestion {
   phonetic: string
   pos: string
   meaning: string
-  band: number
+  /** 该词的全局词频排名。越大越生僻 */
+  frequency_rank: number
   answered: number
   total: number
 }
 
-export interface PlacementOutcome {
-  vocab_estimate: number
-  pass_rates: number[]
-  graded_review: number
-  graded_learning: number
-  skipped_new: number
-}
-
 export interface PlacementAnswerOutcome {
-  band_closed: boolean
+  answered: number
+  total: number
   placement_done: boolean
 }
 
@@ -140,18 +134,17 @@ export const getPlacementQuestion = () =>
 
 export const submitPlacementAnswer = (
   wordId: number,
-  band: number,
   isCorrect: boolean,
   reactionMs: number,
 ) =>
-  call<PlacementAnswerOutcome>('submit_placement_answer', {
-    wordId,
-    band,
-    isCorrect,
-    reactionMs,
-  })
+  call<PlacementAnswerOutcome>('submit_placement_answer', { wordId, isCorrect, reactionMs })
 
-export const finalizePlacement = () => call<PlacementOutcome>('finalize_placement')
+/**
+ * 结束摸底，返回能力概览——和设置页那张卡是同一份数据。
+ *
+ * 摸底不再产出一套自己的数字：它和日常作答更新的是同一个估计。
+ */
+export const finalizePlacement = () => call<AbilityOverview>('finalize_placement')
 
 // ── 抽卡与图鉴 ──────────────────────────
 

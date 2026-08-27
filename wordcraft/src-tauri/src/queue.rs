@@ -23,16 +23,6 @@ const VALID_SESSION_TYPES: [&str; 4] = ["morning", "noon", "evening", "free"];
 /// 该上限失去意义，改为 30——留出 10 词余量吸收上一时段的未完成部分。
 pub const MERGED_LIMIT: i64 = 30;
 
-/// 单场最多插入的摸底抽查词。
-///
-/// 先前这一层吃光剩余格位，而摸底会预建一千多个词——实测 1438 个，
-/// 按每场 18 格算，**约 79 场之内新词一个都排不进来**。用户因此
-/// 连着几个月只见到初中虚词。
-///
-/// 抽查的目的是抓摸底假阳性，那是抽样，不是把每条判断都重考一遍。
-/// 每场留两格，既能持续验证，又不至于饿死新词。
-pub const PROBE_PER_SESSION: i64 = 2;
-
 /// 自适应阈值。R 为强化池大小。
 const RELAXED_MAX: i64 = 15;
 const STRAINED_MAX: i64 = 30;
@@ -78,7 +68,6 @@ pub enum QueueSource {
     /// due_at 已到的复习词
     DueReview,
     /// 摸底预分级但从未真正作答的词，用于纠正假阳性
-    PlacementProbe,
     /// 从未学过的新词
     New,
 }
@@ -342,35 +331,12 @@ pub fn build(
         }
     }
 
-    // 3. 能力抽查：预分级但从未真正作答过的词。
+    // 摸底不再预分级，也不再预建 `word_states`（见 placement/mod.rs），
+    // 于是「预分级但没作答过」的词从此为空——原先的抽查层永远查不到东西。
     //
-    //    **这一层是能力评估的采样器**，「贯穿在每日作答里」指的就是它。
-    //    这些词 `reps = 0`，答一次就是一次首见观测，会更新 θ（见 review.rs）。
-    //
-    //    按**离能力边界的远近**取，而不是按频段。第 1 名的词答对说明不了
-    //    任何事，第 40000 名的词答对多半是蒙的——信息量最大的是边界附近，
-    //    那里答对答错各半，每一题都真正改变估计。
-    //
-    //    限量两题：抽查是抽样，不是把每条判断重考一遍。先前实现吃光剩余
-    //    格位，等于把新词全部挤掉。
-    let remaining = (limit - items.len() as i64).min(PROBE_PER_SESSION);
-    let boundary = crate::ability::vocabulary_rank(ability.theta);
-    let probes = query_with_state(
-        conn,
-        &format!("s.reps = 0 AND s.app_state != 'new' AND {scope_sql}"),
-        // 没有排名的词排最后：难度未知，问了也不知道说明什么
-        &format!(
-            "(w.frequency_rank IS NULL), ABS(w.frequency_rank - {boundary}), s.due_at ASC"
-        ),
-        &[],
-        remaining,
-        QueueSource::PlacementProbe,
-    )?;
-    for it in probes {
-        if seen.insert(it.word_id) && (items.len() as i64) < limit {
-            items.push(it);
-        }
-    }
+    // 它的职责已经由新词层接管：新词也是没教过就直接考，而且就取自能力
+    // 前沿——那正是信息量最大的地方。每场 6–14 个首见观测，比每场 2 个
+    // 抽查多得多。
 
     // 4. 新词：受自适应配额与剩余空位双重限制
     let remaining = (limit - items.len() as i64).min(quota.new_words);
@@ -599,75 +565,6 @@ mod tests {
             !q.iter().any(|i| i.source == QueueSource::DueReview),
             "due_at 在未来的词不应被排入"
         );
-    }
-
-    #[test]
-    fn 摸底抽查限量且不饿死新词() {
-        let conn = seed(20);
-        // 6 个摸底预分级词（reps=0，状态非 new）
-        for id in 1..=6 {
-            set_state(&conn, id, "review", &future(), 0);
-        }
-        let q = build(&conn, "morning", 8).unwrap();
-
-        let probes = q.iter().filter(|i| i.source == QueueSource::PlacementProbe).count();
-        let news = q.iter().filter(|i| i.source == QueueSource::New).count();
-
-        // 旧实现把剩余格位全给抽查。摸底会预建一千多个词，
-        // 那意味着几十场之内新词一个都排不进来
-        assert_eq!(probes as i64, PROBE_PER_SESSION, "抽查必须限量");
-        assert!(news > 0, "限量之后新词必须拿得到位置");
-        assert_eq!(q.len(), 8);
-    }
-
-    #[test]
-    fn 能力抽查取离掌握边界最近的词() {
-        let conn = seed(20);
-        let boundary = crate::ability::vocabulary_rank(crate::ability::PRIOR_THETA);
-
-        // 三个候选：远低于边界、贴着边界、远高于边界
-        for (id, rank) in [(1, 5), (2, boundary), (3, boundary * 20)] {
-            set_state(&conn, id, "review", &future(), 0);
-            conn.execute(
-                "UPDATE words SET frequency_rank = ?1 WHERE id = ?2",
-                [rank, id],
-            )
-            .unwrap();
-        }
-
-        let q = build(&conn, "morning", 8).unwrap();
-        let probe = q
-            .iter()
-            .find(|i| i.source == QueueSource::PlacementProbe)
-            .expect("应有抽查词");
-
-        // 第 5 名的词答对说明不了任何事，第 boundary×20 名答对多半是蒙的。
-        // 信息量最大的是边界附近——那里答对答错各半，每题都真正改变估计
-        assert_eq!(probe.word_id, 2, "抽查应取离能力边界最近的词");
-    }
-
-    #[test]
-    fn 无排名的词不被当作抽查首选() {
-        let conn = seed(20);
-        let boundary = crate::ability::vocabulary_rank(crate::ability::PRIOR_THETA);
-        set_state(&conn, 1, "review", &future(), 0);
-        set_state(&conn, 2, "review", &future(), 0);
-        conn.execute("UPDATE words SET frequency_rank = NULL WHERE id = 1", [])
-            .unwrap();
-        conn.execute(
-            "UPDATE words SET frequency_rank = ?1 WHERE id = 2",
-            [boundary * 8],
-        )
-        .unwrap();
-
-        let q = build(&conn, "morning", 8).unwrap();
-        let first = q
-            .iter()
-            .find(|i| i.source == QueueSource::PlacementProbe)
-            .expect("应有抽查词");
-
-        // 难度未知的词问了也不知道说明什么，哪怕有排名的那个离边界很远
-        assert_eq!(first.word_id, 2, "无排名的词不该排在有排名的词之前");
     }
 
     #[test]
@@ -1089,7 +986,7 @@ mod tests {
                     match item.source {
                         QueueSource::New => r.new_words += 1,
                         QueueSource::Reinforcing => r.reinforce += 1,
-                        QueueSource::DueReview | QueueSource::PlacementProbe => r.due += 1,
+                        QueueSource::DueReview => r.due += 1,
                     }
                     // 答对率：新词最低，复习最高，强化居中
                     let p = match item.source {
@@ -1153,7 +1050,7 @@ mod tests {
         let conn = seed(3657);
         let mut rng = Lcg(0xC0FF_EE01);
 
-        let (mut n_new, mut n_due, mut n_reinforce, mut n_probe) = (0usize, 0usize, 0usize, 0usize);
+        let (mut n_new, mut n_due, mut n_reinforce) = (0usize, 0usize, 0usize);
         // 只统计后半程——前期几乎没有已掌握词，会稀释稳态占比。
         // 按 app_state 而非 source 统计：已掌握词到期后走的是 DueReview 来源，
         // 与普通复习词混在一起，只有看状态才分得出
@@ -1167,7 +1064,6 @@ mod tests {
                         QueueSource::New => n_new += 1,
                         QueueSource::DueReview => n_due += 1,
                         QueueSource::Reinforcing => n_reinforce += 1,
-                        QueueSource::PlacementProbe => n_probe += 1,
                     }
                     if day >= 365 {
                         late_total += 1;
@@ -1195,14 +1091,13 @@ mod tests {
 
         let mastered = word_states::count_by_app_state(&conn, "mastered").unwrap();
         let learned = word_states::count_by_app_state(&conn, "review").unwrap() + mastered;
-        let total = n_new + n_due + n_reinforce + n_probe;
+        let total = n_new + n_due + n_reinforce;
 
         println!("\n─── 两年模拟（3657 词库，每天 3 场 × 20 词）───");
         println!("累计词次 {total}");
         println!("  新词      {n_new:>7}  {:>5.1}%", n_new as f64 / total as f64 * 100.0);
         println!("  到期复习  {n_due:>7}  {:>5.1}%", n_due as f64 / total as f64 * 100.0);
         println!("  强化      {n_reinforce:>7}  {:>5.1}%", n_reinforce as f64 / total as f64 * 100.0);
-        println!("  抽查      {n_probe:>7}  {:>5.1}%", n_probe as f64 / total as f64 * 100.0);
         println!("学过 {learned} 词，其中已掌握 {mastered}");
 
         let mastered_ratio = late_mastered as f64 / late_total.max(1) as f64;

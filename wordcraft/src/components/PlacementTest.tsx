@@ -17,7 +17,7 @@ export default function PlacementTest({ onFinish }: PlacementTestProps) {
   const [question, setQuestion] = useState<api.PlacementQuestion | null>(null)
   const [options, setOptions] = useState<string[]>([])
   const [selected, setSelected] = useState<string | null>(null)
-  const [outcome, setOutcome] = useState<api.PlacementOutcome | null>(null)
+  const [outcome, setOutcome] = useState<api.AbilityOverview | null>(null)
   const [cardGlow, setCardGlow] = useState<'default' | 'correct' | 'wrong'>('default')
 
   const startedAt = useRef(0)
@@ -74,7 +74,7 @@ export default function PlacementTest({ onFinish }: PlacementTestProps) {
     else playIncorrect()
 
     try {
-      await api.submitPlacementAnswer(question.word_id, question.band, correct, reactionMs)
+      await api.submitPlacementAnswer(question.word_id, correct, reactionMs)
       setTimeout(() => void loadNext(), 600)
     } catch (e) {
       setErrorMessage(e instanceof Error ? e.message : String(e))
@@ -126,7 +126,6 @@ export default function PlacementTest({ onFinish }: PlacementTestProps) {
   }
 
   if (phase === 'done' && outcome) {
-    const known = outcome.graded_review + outcome.graded_learning
     return (
       <div className="flex items-center justify-center min-h-[500px]">
         <div className="hud-panel rounded-2xl p-8 max-w-md w-full mx-4 pop-in-bounce text-center relative overflow-hidden">
@@ -141,22 +140,28 @@ export default function PlacementTest({ onFinish }: PlacementTestProps) {
             />
             <h2 className="text-2xl font-bold mb-2 font-game tracking-wide">水晶共鸣完成</h2>
             <p className="text-wc-text-muted text-sm mb-6">
-              测试结果会随日常练习自动校正，判错的词会重新出现
+              这只是个起点。往后每天第一次遇见的词，答对答错都会继续校正它
             </p>
 
             <div className="bg-wc-bg/50 border border-wc-border/50 rounded-xl p-6 mb-6">
               <div className="mb-4">
                 <div className="text-sm text-wc-text-muted">估算词汇量</div>
-                <div className="text-4xl font-bold text-wc-gold font-game-mono">{outcome.vocab_estimate}</div>
-              </div>
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <div className="text-wc-text-muted">已点亮</div>
-                  <div className="text-xl font-bold text-wc-success">{known} 词</div>
+                <div className="text-4xl font-bold text-wc-gold font-game-mono">
+                  {outcome.vocabulary.toLocaleString()}
                 </div>
-                <div>
-                  <div className="text-wc-text-muted">待学习</div>
-                  <div className="text-xl font-bold text-wc-accent">{outcome.skipped_new} 词</div>
+                <div className="text-xs text-wc-text-muted font-game-mono mt-1">
+                  区间 {outcome.vocabulary_low.toLocaleString()}–
+                  {outcome.vocabulary_high.toLocaleString()}
+                </div>
+              </div>
+              <div className="text-sm">
+                <div className="text-wc-text-muted">接下来重点练</div>
+                <div className="text-xl font-bold text-wc-accent">
+                  {outcome.frontier_untouched.toLocaleString()} 词
+                </div>
+                <div className="text-xs text-wc-text-muted font-game-mono mt-1">
+                  词频第 {outcome.frontier_from.toLocaleString()}–
+                  {outcome.frontier_to.toLocaleString()} 名
                 </div>
               </div>
             </div>
@@ -195,7 +200,7 @@ export default function PlacementTest({ onFinish }: PlacementTestProps) {
       <div className="flex items-center justify-between text-sm mb-2">
         <span className="text-wc-text-muted font-game-mono">第 {question.answered + 1} 题</span>
         <span className="text-xs px-2 py-0.5 rounded-lg bg-wc-surface-2 border border-wc-border text-wc-text-muted font-game-mono">
-          难度 {question.band}
+          词频第 {question.frequency_rank.toLocaleString()} 名
         </span>
       </div>
 

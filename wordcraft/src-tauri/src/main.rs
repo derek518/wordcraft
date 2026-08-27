@@ -125,6 +125,7 @@ fn main() {
             commands::config::get_setting,
             commands::config::get_study_levels,
             commands::config::get_pace,
+            commands::stats::get_ability_overview,
             reset::reset_learning_data_cmd,
             commands::config::set_setting,
             // 平台能力

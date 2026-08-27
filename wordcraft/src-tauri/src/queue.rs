@@ -171,15 +171,40 @@ fn query_with_state(
         .map_err(|e| format!("读取排队结果失败: {e}"))
 }
 
-fn take_new_words(conn: &Connection, limit: i64, scope_sql: &str) -> Result<Vec<QueueItem>, String> {
+/// 取新词：**最常用的、这孩子多半还不会的那些**。
+///
+/// 先前按 `frequency_band` 升序，于是永远从最高频的词开始教——包括早就
+/// 会了的。现在按能力分层排序：
+///
+/// 1. **前沿**（`0.30 ≤ P_known ≤ 0.85`）：该教的就是这些
+/// 2. 太超前：前沿学完了才轮到，从最常用的开始，边界自然往外推
+/// 3. 无排名：难度未知，排在「大概率已会」之前
+/// 4. 大概率已会：兜底，避免词池空掉时无词可教
+///
+/// **不硬过滤只排序**。硬过滤到前沿的话，边界附近的词学完队列就空了，
+/// 学习会停在那里——而 θ 本来就不该随训练漂移（见 ability.rs）。
+fn take_new_words(
+    conn: &Connection,
+    limit: i64,
+    scope_sql: &str,
+    ability: &crate::ability::Ability,
+) -> Result<Vec<QueueItem>, String> {
     if limit <= 0 {
         return Ok(Vec::new());
     }
+    let (easy, hard) = crate::ability::frontier_ranks(ability.theta);
     let sql = format!(
         "SELECT {WORD_COLS} FROM words w
          WHERE NOT EXISTS (SELECT 1 FROM word_states s WHERE s.word_id = w.id)
            AND {scope_sql}
-         ORDER BY w.frequency_band, w.id
+         ORDER BY
+           CASE
+             WHEN w.frequency_rank IS NULL              THEN 2
+             WHEN w.frequency_rank BETWEEN {easy} AND {hard} THEN 0
+             WHEN w.frequency_rank > {hard}             THEN 1
+             ELSE 3
+           END,
+           w.frequency_rank, w.id
          LIMIT {limit}"
     );
     let mut stmt = conn
@@ -268,6 +293,10 @@ pub fn build(
     // 学习范围决定「哪些词该教」。高中生不必再背 the / be / I（见 scope.rs）
     let scope_sql = crate::scope::current(conn)?.sql_filter();
 
+    // 能力估计决定「教哪些词」：不是按初中/高中标签，而是按这孩子
+    // 的掌握边界落在词频轴的哪一位（见 ability.rs）
+    let ability = crate::db::repo::player_stats::ability(conn)?;
+
     let pool = word_states::count_by_app_state(conn, "reinforcing")?;
     // 本场新词配额由每日预算按剩余时段推算（见 plan.rs），不是独立设置项
     let plan = crate::plan::for_session(conn, &today, session_type)?;
@@ -313,20 +342,26 @@ pub fn build(
         }
     }
 
-    // 3. 摸底抽查：预分级但从未真正作答过的词。
+    // 3. 能力抽查：预分级但从未真正作答过的词。
     //
-    //    **限量且从难到易。** 决议 S7 给的机制本是「stability 起 7–14 天，
-    //    让假阳性两周内自然到期暴露」——它从没要求把每条判断都重考一遍。
-    //    先前实现按频段升序、吃光剩余格位，等于先去验证「你认识 the」这种
-    //    几乎不可能错的判断，同时把新词全部挤掉。
+    //    **这一层是能力评估的采样器**，「贯穿在每日作答里」指的就是它。
+    //    这些词 `reps = 0`，答一次就是一次首见观测，会更新 θ（见 review.rs）。
     //
-    //    真正可能猜错的是难词那一端，所以按频段降序取。
+    //    按**离能力边界的远近**取，而不是按频段。第 1 名的词答对说明不了
+    //    任何事，第 40000 名的词答对多半是蒙的——信息量最大的是边界附近，
+    //    那里答对答错各半，每一题都真正改变估计。
+    //
+    //    限量两题：抽查是抽样，不是把每条判断重考一遍。先前实现吃光剩余
+    //    格位，等于把新词全部挤掉。
     let remaining = (limit - items.len() as i64).min(PROBE_PER_SESSION);
+    let boundary = crate::ability::vocabulary_rank(ability.theta);
     let probes = query_with_state(
         conn,
         &format!("s.reps = 0 AND s.app_state != 'new' AND {scope_sql}"),
-        // 难词先验：摸底在这一端最可能判错
-        "w.frequency_band DESC, s.due_at ASC",
+        // 没有排名的词排最后：难度未知，问了也不知道说明什么
+        &format!(
+            "(w.frequency_rank IS NULL), ABS(w.frequency_rank - {boundary}), s.due_at ASC"
+        ),
         &[],
         remaining,
         QueueSource::PlacementProbe,
@@ -339,7 +374,7 @@ pub fn build(
 
     // 4. 新词：受自适应配额与剩余空位双重限制
     let remaining = (limit - items.len() as i64).min(quota.new_words);
-    for it in take_new_words(conn, remaining, scope_sql)? {
+    for it in take_new_words(conn, remaining, scope_sql, &ability)? {
         if seen.insert(it.word_id) && (items.len() as i64) < limit {
             items.push(it);
         }
@@ -586,13 +621,19 @@ mod tests {
     }
 
     #[test]
-    fn 摸底抽查从难词开始() {
+    fn 能力抽查取离掌握边界最近的词() {
         let conn = seed(20);
-        // seed 全是 band 1，另塞两个高频段的摸底词
-        set_state(&conn, 1, "review", &future(), 0);
-        set_state(&conn, 2, "review", &future(), 0);
-        conn.execute("UPDATE words SET frequency_band = 5 WHERE id = 2", [])
+        let boundary = crate::ability::vocabulary_rank(crate::ability::PRIOR_THETA);
+
+        // 三个候选：远低于边界、贴着边界、远高于边界
+        for (id, rank) in [(1, 5), (2, boundary), (3, boundary * 20)] {
+            set_state(&conn, id, "review", &future(), 0);
+            conn.execute(
+                "UPDATE words SET frequency_rank = ?1 WHERE id = ?2",
+                [rank, id],
+            )
             .unwrap();
+        }
 
         let q = build(&conn, "morning", 8).unwrap();
         let probe = q
@@ -600,9 +641,104 @@ mod tests {
             .find(|i| i.source == QueueSource::PlacementProbe)
             .expect("应有抽查词");
 
-        // 「你认识 the」几乎不可能判错；真正可能猜错的是难词那一端。
-        // 按频段升序取等于把力气花在最不需要验证的判断上
-        assert_eq!(probe.frequency_band, 5, "抽查应先验最可能判错的难词");
+        // 第 5 名的词答对说明不了任何事，第 boundary×20 名答对多半是蒙的。
+        // 信息量最大的是边界附近——那里答对答错各半，每题都真正改变估计
+        assert_eq!(probe.word_id, 2, "抽查应取离能力边界最近的词");
+    }
+
+    #[test]
+    fn 无排名的词不被当作抽查首选() {
+        let conn = seed(20);
+        let boundary = crate::ability::vocabulary_rank(crate::ability::PRIOR_THETA);
+        set_state(&conn, 1, "review", &future(), 0);
+        set_state(&conn, 2, "review", &future(), 0);
+        conn.execute("UPDATE words SET frequency_rank = NULL WHERE id = 1", [])
+            .unwrap();
+        conn.execute(
+            "UPDATE words SET frequency_rank = ?1 WHERE id = 2",
+            [boundary * 8],
+        )
+        .unwrap();
+
+        let q = build(&conn, "morning", 8).unwrap();
+        let first = q
+            .iter()
+            .find(|i| i.source == QueueSource::PlacementProbe)
+            .expect("应有抽查词");
+
+        // 难度未知的词问了也不知道说明什么，哪怕有排名的那个离边界很远
+        assert_eq!(first.word_id, 2, "无排名的词不该排在有排名的词之前");
+    }
+
+    #[test]
+    fn 新词优先取前沿而非最高频() {
+        let conn = seed(20);
+        let (easy, hard) = crate::ability::frontier_ranks(crate::ability::PRIOR_THETA);
+
+        // id 1 是最高频但远在边界之下（大概率已会），id 2 落在前沿
+        conn.execute("UPDATE words SET frequency_rank = 3 WHERE id = 1", [])
+            .unwrap();
+        conn.execute(
+            "UPDATE words SET frequency_rank = ?1 WHERE id = 2",
+            [(easy + hard) / 2],
+        )
+        .unwrap();
+        conn.execute("UPDATE words SET frequency_rank = NULL WHERE id > 2", [])
+            .unwrap();
+
+        let q = build(&conn, "morning", 8).unwrap();
+        let first_new = q
+            .iter()
+            .find(|i| i.source == QueueSource::New)
+            .expect("应有新词");
+
+        // 先前按 frequency_band 升序，于是永远从最高频的词开始教——
+        // 包括早就会了的。用户报的「一堆 on/in/I/you」正是这个
+        assert_eq!(first_new.word_id, 2, "新词应先取前沿，而不是最高频");
+    }
+
+    #[test]
+    fn 前沿为空时超前词优先于已会的词() {
+        let conn = seed(20);
+        let (easy, hard) = crate::ability::frontier_ranks(crate::ability::PRIOR_THETA);
+        // 一半远低于边界（大概率已会），一半远高于边界（太超前），前沿为空
+        conn.execute("UPDATE words SET frequency_rank = ?1 WHERE id <= 10", [easy / 4])
+            .unwrap();
+        conn.execute("UPDATE words SET frequency_rank = ?1 WHERE id > 10", [hard * 4])
+            .unwrap();
+
+        let q = build(&conn, "morning", 8).unwrap();
+        let first_new = q
+            .iter()
+            .find(|i| i.source == QueueSource::New)
+            .expect("应有新词");
+
+        // 超前的词还值得学，已经会的词是纯浪费——次序反了就等于
+        // 又回到「一堆 on/in/I/you」
+        assert!(
+            first_new.word_id > 10,
+            "应先给超前的词，而不是大概率已会的词（拿到 id={}）",
+            first_new.word_id
+        );
+    }
+
+    #[test]
+    fn 前沿学完后仍有新词可教() {
+        let conn = seed(20);
+        let (_, hard) = crate::ability::frontier_ranks(crate::ability::PRIOR_THETA);
+        // 全部推到「太超前」那一端，前沿为空
+        conn.execute(
+            "UPDATE words SET frequency_rank = ?1 + id * 100",
+            [hard],
+        )
+        .unwrap();
+
+        let q = build(&conn, "morning", 8).unwrap();
+        // 硬过滤到前沿的话队列会空掉，学习就停在那里
+        assert!(
+            q.iter().any(|i| i.source == QueueSource::New),
+            "前沿为空时应回落到最容易的超前词，而不是不给词"
+        );
     }
 
     #[test]

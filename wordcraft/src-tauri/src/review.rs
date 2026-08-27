@@ -150,7 +150,13 @@ fn resolve_mastered_at(
 ///   `ability.rs`）。Lv.5 是全拼写，没有选项，猜对率为 0——同一个模型套上去
 ///   会把拼写答错当成能力不足的证据，而拼写难度远高于认词。
 fn counts_toward_ability(previous: Option<&word_states::WordState>, dto: &ReviewCommitDto) -> bool {
-    previous.is_none_or(|p| p.reps == 0) && dto.question_type <= 4
+    // 用 match 而非 `is_none_or`：后者 Rust 1.82 才稳定，
+    // 而本包的 rust-version 是 1.77.2
+    let first_encounter = match previous {
+        None => true,
+        Some(p) => p.reps == 0,
+    };
+    first_encounter && dto.question_type <= 4
 }
 
 /// 用一次首见作答更新能力估计，并同步词汇量。
@@ -312,7 +318,7 @@ mod tests {
     /// 带词频排名的词。默认夹具的排名是 None（能力更新会跳过），
     /// 测能力估计必须用有排名的词
     fn setup_ranked(rank: i64) -> Connection {
-        let mut conn = setup();
+        let conn = setup();
         conn.execute("UPDATE words SET frequency_rank = ?1 WHERE id = 1", [rank])
             .unwrap();
         conn

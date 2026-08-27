@@ -168,10 +168,8 @@ pub fn frontier_ranks(theta: f64) -> (i64, i64) {
 /// 步长 = 本次得分 ÷ 累计信息量。前几次观测大幅修正，之后自然收敛，
 /// 不需要人为衰减系数——那种系数是另一个没法校准的常量。
 pub fn update(prior: Ability, rank: i64, is_correct: bool) -> Ability {
-    let d = difficulty(rank);
-    let z = (prior.theta - d) / SLOPE;
-    let q = sigma(z);
-    let p = GUESS + (1.0 - GUESS) * q;
+    let q = p_known(prior.theta, rank);
+    let p = p_correct(prior.theta, rank);
 
     // 概率贴到 0 或 1 时分母塌陷。夹住而不是跳过——
     // 极端难度的词信息量本就接近 0，夹住后自然只贡献很小的修正

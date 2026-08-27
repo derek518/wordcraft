@@ -3,6 +3,7 @@
 //! 所有数字均由 SQL 聚合真实数据产出——审计 D5 的教训是任何一处硬编码的
 //! 「示例数据」都会在词库扩大后变成谎言。
 
+use crate::ability;
 use crate::db::{clock, repo::*, Db};
 use rusqlite::Connection;
 use serde::Serialize;
@@ -154,6 +155,86 @@ pub fn get_heatmap(db: State<Db>, days: i64) -> Result<Vec<HeatmapCell>, String>
 pub fn export_data_json(db: State<Db>) -> Result<String, String> {
     let conn = lock(&db)?;
     export_json(&conn)
+}
+
+/// 能力概览：孩子的水平估到哪，重点该放在哪一段。
+///
+/// 这是「学习范围」那个下拉框的替代品。范围不再由家长猜，而是由每天的作答
+/// 算出来——见 `ability.rs` 与契约 §10。
+#[derive(Debug, Serialize)]
+pub struct AbilityOverview {
+    /// 估计的词汇量：词库里排名在掌握边界之前的词数
+    pub vocabulary: i64,
+    /// 不确定区间（±1 标准误换算成词汇量）
+    pub vocabulary_low: i64,
+    pub vocabulary_high: i64,
+    /// 学习前沿的词频排名区间
+    pub frontier_from: i64,
+    pub frontier_to: i64,
+    /// 词库按能力分层的词数
+    pub known: i64,
+    pub frontier: i64,
+    pub too_hard: i64,
+    /// 前沿里还没学过的词数——还剩多少可练
+    pub frontier_untouched: i64,
+    /// 参与估计的观测数。为 0 表示还在用先验，界面该说明这一点
+    pub observations: i64,
+}
+
+/// 逐词分类而不是用 SQL 的区间条件：分层只该有一份定义（`ability::tier`）。
+/// SQL 里抄一份边界，改了阈值这里就开始说谎。
+fn overview_of(conn: &Connection, a: &ability::Ability) -> Result<AbilityOverview, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT w.frequency_rank,
+                    EXISTS (SELECT 1 FROM word_states s WHERE s.word_id = w.id) AS touched
+             FROM words w WHERE w.frequency_rank IS NOT NULL",
+        )
+        .map_err(|e| format!("准备能力概览查询失败: {e}"))?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, bool>(1)?)))
+        .map_err(|e| format!("执行能力概览查询失败: {e}"))?;
+
+    let (mut known, mut frontier, mut too_hard, mut frontier_untouched) = (0, 0, 0, 0);
+    for row in rows {
+        let (rank, touched) = row.map_err(|e| format!("读取能力概览失败: {e}"))?;
+        match ability::tier(a.theta, rank) {
+            ability::Tier::Known => known += 1,
+            ability::Tier::Frontier => {
+                frontier += 1;
+                if !touched {
+                    frontier_untouched += 1;
+                }
+            }
+            ability::Tier::TooHard => too_hard += 1,
+        }
+    }
+
+    let (frontier_from, frontier_to) = ability::frontier_ranks(a.theta);
+    let se = ability::standard_error(a.information);
+    // 把不确定度换算成词汇量上下界：θ ± 1 个标准误，比「SE = 0.46」好懂得多
+    let vocab_at = |theta: f64| player_stats::vocab_from_ability(conn, &ability::Ability { theta, ..*a });
+
+    Ok(AbilityOverview {
+        vocabulary: vocab_at(a.theta)?,
+        vocabulary_low: vocab_at(a.theta - se)?,
+        vocabulary_high: vocab_at(a.theta + se)?,
+        frontier_from,
+        frontier_to,
+        known,
+        frontier,
+        too_hard,
+        frontier_untouched,
+        observations: a.observations,
+    })
+}
+
+/// contracts §3.4
+#[tauri::command]
+pub fn get_ability_overview(db: State<Db>) -> Result<AbilityOverview, String> {
+    let conn = db.0.lock().map_err(|e| format!("获取数据库锁失败: {e}"))?;
+    let a = player_stats::ability(&conn)?;
+    overview_of(&conn, &a)
 }
 
 #[cfg(test)]

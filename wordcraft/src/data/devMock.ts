@@ -249,6 +249,13 @@ const HANDLERS: Record<string, (args?: Record<string, unknown>) => unknown> = {
     total_rows: 2037,
   }),
 
+  get_ability_overview: () => ({
+    vocabulary: 2504, vocabulary_low: 2100, vocabulary_high: 3010,
+    frontier_from: 667, frontier_to: 4777,
+    known: 666, frontier: 3120, too_hard: 1474,
+    frontier_untouched: 2988, observations: 42,
+  }),
+
   search_words: () => [],
   play_word_audio: () => null,
   postpone_session: () => ({ remaining: 2 }),

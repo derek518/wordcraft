@@ -21,15 +21,22 @@
 use rusqlite::Connection;
 
 /// 学习范围。存于 `settings.study_level`。
+///
+/// **这是可选的考纲约束，不是难度选择器。** 难度由能力模型决定（见
+/// `ability.rs` 与契约 §10）——按 `level` 标签筛难度本来就不成立：
+/// 102 个高中词的常用度和 `the` 同级，28 个初中词比大多数四级词还生僻。
+///
+/// 留着它是因为「只想过一遍高考考纲」是个正当诉求。默认 `All`：
+/// 让能力模型在全库里挑，那才是它该干的事。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StudyLevel {
-    /// 初中：学 junior，senior 不出现
+    /// 只练中考考纲
     Junior,
-    /// 高中（默认）：学 senior。junior 视为已掌握，不再教
+    /// 只练高考考纲
     Senior,
-    /// 四级：考纲之外的扩展。高考后接着用，或基础好的提前拓宽
+    /// 只练四级词
     Cet4,
-    /// 全部：考纲全收。给基础特别薄弱、或想从头过一遍的用户
+    /// 全库（默认）：不设考纲限制，由能力模型挑词
     All,
 }
 
@@ -71,19 +78,24 @@ impl StudyLevel {
 
 /// 读取当前学习范围。
 ///
-/// 默认 `Senior`：产品面向高中生备考高考。值非法时也回落到默认并记 warn——
-/// 学习范围读错的后果是「几个月都在背虚词」，不该静默发生。
+/// 默认 `All`。
+///
+/// 先前默认 `Senior`，那是在用考纲标签冒充难度选择器——而标签和难度基本无关。
+/// 现在难度由能力模型负责，范围只在用户明确要求「只过考纲」时才该收窄。
+///
+/// 值非法时回落到默认并记 warn：范围读错的后果是「几个月都在练错误的词」，
+/// 不该静默发生。
 pub fn current(conn: &Connection) -> Result<StudyLevel, String> {
     use crate::db::repo::settings;
 
     let raw = settings::get(conn, SETTING_KEY)?;
     match raw.as_deref() {
-        None => Ok(StudyLevel::Senior),
+        None => Ok(StudyLevel::All),
         Some(v) => match StudyLevel::parse(v) {
             Some(level) => Ok(level),
             None => {
-                log::warn!("settings.{SETTING_KEY} 的值 `{v}` 无法识别，按 senior 处理");
-                Ok(StudyLevel::Senior)
+                log::warn!("settings.{SETTING_KEY} 的值 `{v}` 无法识别，按 all 处理");
+                Ok(StudyLevel::All)
             }
         },
     }
@@ -172,9 +184,11 @@ mod tests {
     }
 
     #[test]
-    fn 默认高中() {
-        // 产品面向高考备考。默认错了，用户要几个月后才会察觉
-        assert_eq!(current(&db()).unwrap(), StudyLevel::Senior);
+    fn 默认全库() {
+        // 范围是可选的考纲约束，不是难度选择器——难度由能力模型负责。
+        // 默认收窄到某个考纲，等于替用户猜他孩子什么水平，而那正是
+        // 这套设计要消除的东西
+        assert_eq!(current(&db()).unwrap(), StudyLevel::All);
     }
 
     #[test]
@@ -189,7 +203,7 @@ mod tests {
         let conn = db();
         crate::db::repo::settings::set(&conn, SETTING_KEY, "大学").unwrap();
         // 拦不住的坏值不该让整个排队失败——降级到默认，日志留痕
-        assert_eq!(current(&conn).unwrap(), StudyLevel::Senior);
+        assert_eq!(current(&conn).unwrap(), StudyLevel::All);
     }
 
     #[test]

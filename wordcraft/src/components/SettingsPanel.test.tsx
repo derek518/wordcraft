@@ -30,7 +30,15 @@ const LEVELS: api.StudyLevelOption[] = [
 /** 后端推算的节奏。数值刻意与「天数×预算」不符，好验证界面确实在读它 */
 const PACE: api.Pace = { new_per_session: 6, session_words: 18, weekly_new: 126 }
 
+const OVERVIEW: api.AbilityOverview = {
+  vocabulary: 2504, vocabulary_low: 2100, vocabulary_high: 3010,
+  frontier_from: 667, frontier_to: 4777,
+  known: 666, frontier: 3120, too_hard: 1474,
+  frontier_untouched: 2988, observations: 42,
+}
+
 function stub() {
+  vi.spyOn(api, 'getAbilityOverview').mockResolvedValue(OVERVIEW)
   vi.spyOn(api, 'getPace').mockResolvedValue(PACE)
   vi.spyOn(api, 'getStudyLevels').mockResolvedValue(LEVELS)
   vi.spyOn(api, 'getOverallStats').mockResolvedValue(STATS)
@@ -123,20 +131,60 @@ describe('设置面板', () => {
     expect(api.setSetting).not.toHaveBeenCalledWith('autostart_enabled', expect.anything())
   })
 
-  it('学习范围默认高中，切换写入 study_level', async () => {
+  it('切换考纲范围写入 study_level', async () => {
     const set = stub()
     render(<SettingsPanel onBack={() => {}} />)
     await settle()
-
-    // 默认必须是高中：默认错了，用户要几个月后才会发现自己在背虚词
-    const senior = btn('高中')!
-    expect(senior.className).toContain('border-wc-primary')
 
     await act(async () => {
       btn('初中')!.click()
     })
     await settle()
     expect(set).toHaveBeenCalledWith('study_level', 'junior')
+  })
+
+  describe('能力概览', () => {
+    it('展示估计的词汇量与重点段，全部取自后端', async () => {
+      stub()
+      render(<SettingsPanel onBack={() => {}} />)
+      await settle()
+
+      // 这些数字都由 ability.rs 的模型算出。界面上自己算一份，
+      // 后端调参后就开始说谎——本项目已三次栽在写死的计数上
+      expect(text()).toContain('2,504')
+      expect(text()).toContain('667')
+      expect(text()).toContain('4,777')
+      expect(text()).toContain('2,988')
+    })
+
+    it('还没有观测时说明这是初始估计', async () => {
+      stub()
+      vi.spyOn(api, 'getAbilityOverview').mockResolvedValue({ ...OVERVIEW, observations: 0 })
+      render(<SettingsPanel onBack={() => {}} />)
+      await settle()
+
+      // 把先验当成实测结果展示，家长会以为软件真的测过了
+      expect(text()).toContain('初始估计')
+    })
+
+    it('有观测时显示采集了多少次，不再说是初始估计', async () => {
+      stub()
+      render(<SettingsPanel onBack={() => {}} />)
+      await settle()
+
+      expect(text()).toContain('42')
+      expect(text()).not.toContain('初始估计')
+    })
+
+    it('范围选择被标注为可选，且说明难度不靠它', async () => {
+      stub()
+      render(<SettingsPanel onBack={() => {}} />)
+      await settle()
+
+      // 用考纲标签冒充难度选择器正是这次要拆掉的东西
+      expect(text()).toContain('考纲范围（可选）')
+      expect(text()).toContain('难度不靠它')
+    })
   })
 
   it('范围选项与词数来自后端，不写死', async () => {
@@ -239,12 +287,8 @@ describe('设置面板', () => {
   })
 
   it('周末两天时给出超过半年的提醒', async () => {
+    stub()
     vi.spyOn(api, 'getPace').mockResolvedValue({ ...PACE, weekly_new: 36 })
-    vi.spyOn(api, 'getStudyLevels').mockResolvedValue(LEVELS)
-    vi.spyOn(api, 'getOverallStats').mockResolvedValue(STATS)
-    vi.spyOn(api, 'setSetting').mockResolvedValue(undefined)
-    vi.spyOn(api, 'setAutostart').mockResolvedValue(undefined)
-    vi.spyOn(api, 'exportDataJson').mockResolvedValue('{}')
     vi.spyOn(api, 'getSetting').mockImplementation(async (k) =>
       k === 'study_days' ? '6,7' : VALUES[k] ?? null,
     )

@@ -386,6 +386,32 @@ export interface StudyLevelOption {
   words: number
 }
 
+export interface AbilityOverview {
+  /** 估计的词汇量 */
+  vocabulary: number
+  /** ±1 标准误换算成的词汇量区间 */
+  vocabulary_low: number
+  vocabulary_high: number
+  /** 学习前沿的词频排名区间 */
+  frontier_from: number
+  frontier_to: number
+  /** 词库按能力分层的词数 */
+  known: number
+  frontier: number
+  too_hard: number
+  /** 前沿里还没学过的词数 */
+  frontier_untouched: number
+  /** 参与估计的观测数。为 0 表示还在用先验 */
+  observations: number
+}
+
+/**
+ * 能力概览：水平估到哪，重点该放在哪一段。
+ *
+ * 这是「学习范围」的替代品。范围不再由家长猜，而是由每天的作答算出来。
+ */
+export const getAbilityOverview = () => call<AbilityOverview>('get_ability_overview')
+
 /** 可选学习范围。词数由后端现查——写死的计数在本项目已三次变成谎话 */
 export const getStudyLevels = () => call<StudyLevelOption[]>('get_study_levels')
 

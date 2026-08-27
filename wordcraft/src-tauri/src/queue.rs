@@ -744,7 +744,9 @@ mod tests {
     #[test]
     fn 学习范围之外的词不进队列() {
         let mut conn = seed(5);
-        // 再塞一个初中虚词。默认范围是 senior，它绝不该出现
+        // 显式收窄到高中考纲。默认是全库——范围是可选约束，不是难度选择器
+        crate::db::repo::settings::set(&conn, crate::scope::SETTING_KEY, "senior").unwrap();
+        // 再塞一个初中虚词。范围收窄后它绝不该出现
         words::import(
             &mut conn,
             &[words::WordImport {
@@ -776,6 +778,7 @@ mod tests {
         // 它们带着 reps>0 不断到期。若到期复习这一层不过滤范围，
         // 这些词会一直回来，切换范围等于没切
         let mut conn = seed(5);
+        crate::db::repo::settings::set(&conn, crate::scope::SETTING_KEY, "senior").unwrap();
         words::import(
             &mut conn,
             &[words::WordImport {

@@ -33,6 +33,7 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
   const [studyDays, setStudyDays] = useState('1,2,3,4,5,6,7')
   const [remaining, setRemaining] = useState<number | null>(null)
   const [levelOptions, setLevelOptions] = useState<api.StudyLevelOption[]>([])
+  const [overview, setOverview] = useState<api.AbilityOverview | null>(null)
   const [autostart, setAutostart] = useState(true)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState('')
@@ -55,6 +56,7 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
         api.getOverallStats(),
         api.getStudyLevels(),
       ])
+      setOverview(await api.getAbilityOverview())
       setWindows(w ?? WINDOW_PRESETS[0].value)
       setNewWords(n ?? String(api.DEFAULT_DAILY_NEW))
       setSound(s !== 'false')
@@ -319,9 +321,51 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
           </button>
         </Row>
 
+        {overview && (
+          <div className="py-4">
+            <div className="font-medium font-game mb-1">当前水平</div>
+            <p className="text-xs text-wc-text-muted mb-3 leading-relaxed">
+              由每天的作答自动估算，不需要手动设置。第一次遇见的词答对答错都是一次
+              观测——练得越多，估计越准，重点段也跟着走。
+            </p>
+            <div className="rounded-xl border border-wc-border bg-wc-surface-2 px-4 py-3">
+              <div className="flex items-baseline gap-2">
+                <span className="text-2xl font-game-mono text-wc-accent">
+                  {overview.vocabulary.toLocaleString()}
+                </span>
+                <span className="text-xs text-wc-text-muted font-game-mono">
+                  词 · 区间 {overview.vocabulary_low.toLocaleString()}–
+                  {overview.vocabulary_high.toLocaleString()}
+                </span>
+              </div>
+              <div className="mt-2 text-xs font-game-mono text-wc-text-muted">
+                重点练习：词频第 {overview.frontier_from.toLocaleString()}–
+                {overview.frontier_to.toLocaleString()} 名，
+                <span className="text-wc-primary">
+                  还剩 {overview.frontier_untouched.toLocaleString()} 个没学过
+                </span>
+              </div>
+              <div className="mt-1 text-xs font-game-mono text-wc-text-muted">
+                已掌握 {overview.known.toLocaleString()} · 重点{' '}
+                {overview.frontier.toLocaleString()} · 暂缓{' '}
+                {overview.too_hard.toLocaleString()}
+              </div>
+              {overview.observations === 0 ? (
+                <div className="mt-2 text-xs text-wc-warning">
+                  还没有作答记录，上面是初始估计。练几场之后会自动校正。
+                </div>
+              ) : (
+                <div className="mt-2 text-xs text-wc-text-muted font-game-mono">
+                  已采集 {overview.observations} 次首见作答
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         <Row
-          title="学习范围"
-          hint="高中范围不再教 the / be / I 这类初中虚词——已经会的词不该再占用练习时间。切换后立即生效，已练过的范围外单词也不再排入。"
+          title="考纲范围（可选）"
+          hint="只想过一遍某本考纲时才用。难度不靠它——那由上面的能力估计负责，而考纲标签和难度基本无关：102 个高中词的常用度和 the 同级，28 个初中词比大多数四级词还生僻。默认「全部」，让系统在全库里挑。"
           settingKey="study_level"
         >
           <div className="flex gap-2">

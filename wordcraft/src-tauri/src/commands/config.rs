@@ -207,3 +207,13 @@ mod tests {
         assert!(validate("session_windows", "09:00-11:00,11:00-15:00,19:00-21:00").is_ok());
     }
 }
+
+/// contracts §3.4：可选的学习范围及各自词数。
+///
+/// 由数据库现查，前端不写死。词库一更新，选项与数字自动跟上——
+/// 写死的计数在本项目已经三次变成谎话。
+#[tauri::command]
+pub fn get_study_levels(db: State<Db>) -> Result<Vec<crate::scope::LevelOption>, String> {
+    let conn = db.0.lock().map_err(|e| format!("获取数据库锁失败: {e}"))?;
+    crate::scope::options(&conn)
+}

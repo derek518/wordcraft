@@ -373,6 +373,15 @@ export const getZoneProgress = () => call<ZoneProgress[]>('get_zone_progress')
 
 // ── 设置 ──────────────────────────
 
+export interface StudyLevelOption {
+  value: string
+  label: string
+  words: number
+}
+
+/** 可选学习范围。词数由后端现查——写死的计数在本项目已三次变成谎话 */
+export const getStudyLevels = () => call<StudyLevelOption[]>('get_study_levels')
+
 export const getSetting = (key: string) => call<string | null>('get_setting', { key })
 export const setSetting = (key: string, value: string) =>
   call<void>('set_setting', { key, value })

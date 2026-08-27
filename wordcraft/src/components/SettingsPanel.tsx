@@ -12,18 +12,6 @@ const WINDOW_PRESETS = [
   { label: '在校日', value: '07:00-08:00,12:00-13:30,19:00-22:00' },
 ]
 
-/**
- * 学习范围。默认高中——产品是给备考高考的学生用的。
- *
- * 这不只是筛词：词库里 102 个虚词（the / be / I / you 这类）有 96 个标为
- * junior，选高中就一并挡掉了，不必再单独维护一份虚词名单。
- */
-const LEVEL_OPTIONS = [
-  { value: 'junior', label: '初中', hint: '1581 词' },
-  { value: 'senior', label: '高中', hint: '2076 词' },
-  { value: 'all', label: '全部', hint: '3657 词' },
-]
-
 /** ISO 星期：1=周一 … 7=周日 */
 const WEEKDAYS = [
   { v: 1, label: '一' }, { v: 2, label: '二' }, { v: 3, label: '三' },
@@ -45,6 +33,7 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
   const [studyLevel, setStudyLevel] = useState('senior')
   const [studyDays, setStudyDays] = useState('1,2,3,4,5,6,7')
   const [remaining, setRemaining] = useState<number | null>(null)
+  const [levelOptions, setLevelOptions] = useState<api.StudyLevelOption[]>([])
   const [autostart, setAutostart] = useState(true)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState('')
@@ -52,7 +41,7 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
 
   const load = useCallback(async () => {
     try {
-      const [w, n, c, s, t, a, lv, sd, st] = await Promise.all([
+      const [w, n, c, s, t, a, lv, sd, st, lo] = await Promise.all([
         api.getSetting('session_windows'),
         api.getSetting('daily_new_words'),
         api.getSetting('session_word_count'),
@@ -62,6 +51,7 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
         api.getSetting('study_level'),
         api.getSetting('study_days'),
         api.getOverallStats(),
+        api.getStudyLevels(),
       ])
       setWindows(w ?? WINDOW_PRESETS[0].value)
       setNewWords(n ?? '6')
@@ -72,6 +62,7 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
       setStudyLevel(lv ?? 'senior')
       setStudyDays(sd ?? '1,2,3,4,5,6,7')
       setRemaining(st.untouched)
+      setLevelOptions(lo)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
@@ -280,7 +271,7 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
           settingKey="study_level"
         >
           <div className="flex gap-2">
-            {LEVEL_OPTIONS.map((o) => (
+            {levelOptions.map((o) => (
               <button
                 key={o.value}
                 onClick={() => save('study_level', o.value, setStudyLevel)}
@@ -291,7 +282,7 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
                 }`}
               >
                 <div className="font-bold">{o.label}</div>
-                <div className="text-[10px] text-wc-text-dim mt-0.5">{o.hint}</div>
+                <div className="text-[10px] text-wc-text-dim mt-0.5">{o.words} 词</div>
               </button>
             ))}
           </div>

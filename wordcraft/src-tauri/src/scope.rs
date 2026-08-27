@@ -84,6 +84,65 @@ pub fn current(conn: &Connection) -> Result<StudyLevel, String> {
     }
 }
 
+/// 各范围在库中的真实词数。
+///
+/// 界面上的选项由它渲染，而不是写死一组数字。这个项目已经三次栽在写死的
+/// 计数上：蓝图块数、赛道积分、词库总数——词库一变就成了谎话。
+/// 顺带，四级词导入后 `cet4` 选项会自动出现，不必再改一次前端。
+#[derive(Debug, serde::Serialize)]
+pub struct LevelOption {
+    pub value: String,
+    pub label: String,
+    pub words: i64,
+}
+
+pub fn options(conn: &Connection) -> Result<Vec<LevelOption>, String> {
+    let mut stmt = conn
+        .prepare("SELECT level, COUNT(*) FROM words GROUP BY level")
+        .map_err(|e| format!("准备范围统计失败: {e}"))?;
+    let rows: Vec<(String, i64)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .map_err(|e| format!("统计各范围词数失败: {e}"))?
+        .collect::<Result<_, _>>()
+        .map_err(|e| format!("读取范围统计失败: {e}"))?;
+
+    fn label_of(lv: &str) -> &str {
+        match lv {
+            "junior" => "初中",
+            "senior" => "高中",
+            "cet4" => "四级",
+            other => other,
+        }
+    }
+
+    let total: i64 = rows.iter().map(|(_, n)| n).sum();
+    // 只列出库里真有词的范围。给出一个点了会得到空队列的选项，
+    // 比不给这个选项更糟
+    let mut out: Vec<LevelOption> = rows
+        .iter()
+        .filter(|(_, n)| *n > 0)
+        .map(|(lv, n)| LevelOption {
+            value: lv.clone(),
+            label: label_of(lv).to_string(),
+            words: *n,
+        })
+        .collect();
+    out.sort_by_key(|o| match o.value.as_str() {
+        "junior" => 0,
+        "senior" => 1,
+        "cet4" => 2,
+        _ => 3,
+    });
+    if out.len() > 1 {
+        out.push(LevelOption {
+            value: "all".into(),
+            label: "全部".into(),
+            words: total,
+        });
+    }
+    Ok(out)
+}
+
 /// 启动时报告当前学习范围。
 ///
 /// 这次「几个月都在背 the」之所以难以察觉，正是因为没有任何地方说得出
@@ -155,6 +214,38 @@ mod tests {
             .collect();
 
         assert_eq!(got, vec!["subsequent", "via"], "高中范围应只剩 senior 词");
+    }
+
+    #[test]
+    fn 选项由库中真实词数导出() {
+        let mut conn = db();
+        crate::db::repo::words::import(
+            &mut conn,
+            &[word("apple", "n.", "junior"), word("via", "prep.", "senior"),
+              word("subsequent", "adj.", "senior")],
+        )
+        .unwrap();
+
+        let opts = options(&conn).unwrap();
+        let junior = opts.iter().find(|o| o.value == "junior").unwrap();
+        let senior = opts.iter().find(|o| o.value == "senior").unwrap();
+        // 写死的数字会在词库更新后成为谎话——本项目已经三次栽在这上面
+        assert_eq!(junior.words, 1);
+        assert_eq!(senior.words, 2);
+        assert_eq!(opts.iter().find(|o| o.value == "all").unwrap().words, 3);
+    }
+
+    #[test]
+    fn 库里没有的范围不出现在选项里() {
+        let mut conn = db();
+        crate::db::repo::words::import(&mut conn, &[word("apple", "n.", "junior")]).unwrap();
+
+        let opts = options(&conn).unwrap();
+        // 给出一个点了会得到空队列的选项，比不给这个选项更糟。
+        // 四级词导入后 cet4 会自动出现，不必再改一次前端
+        assert!(!opts.iter().any(|o| o.value == "cet4"));
+        assert!(!opts.iter().any(|o| o.value == "senior"));
+        assert!(!opts.iter().any(|o| o.value == "all"), "只有一档时不必再给「全部」");
     }
 
     #[test]

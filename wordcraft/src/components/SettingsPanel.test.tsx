@@ -22,7 +22,14 @@ const STATS = {
   vocab_estimate: 1382, draw_tickets: 0, makeup_cards: 0,
 }
 
+const LEVELS: api.StudyLevelOption[] = [
+  { value: 'junior', label: '初中', words: 1581 },
+  { value: 'senior', label: '高中', words: 2076 },
+  { value: 'all', label: '全部', words: 3657 },
+]
+
 function stub() {
+  vi.spyOn(api, 'getStudyLevels').mockResolvedValue(LEVELS)
   vi.spyOn(api, 'getOverallStats').mockResolvedValue(STATS)
   vi.spyOn(api, 'getSetting').mockImplementation(async (k) => VALUES[k] ?? null)
   vi.spyOn(api, 'setAutostart').mockResolvedValue(undefined)
@@ -125,6 +132,22 @@ describe('设置面板', () => {
     expect(set).toHaveBeenCalledWith('study_level', 'junior')
   })
 
+  it('范围选项与词数来自后端，不写死', async () => {
+    stub()
+    vi.spyOn(api, 'getStudyLevels').mockResolvedValue([
+      { value: 'senior', label: '高中', words: 2100 },
+      { value: 'cet4', label: '四级', words: 1800 },
+    ])
+    render(<SettingsPanel onBack={() => {}} />)
+    await settle()
+
+    // 四级词导入后选项应自动出现，词数也照库里的算——
+    // 写死的计数在本项目已三次变成谎话
+    expect(text()).toContain('四级')
+    expect(text()).toContain('1800')
+    expect(text()).toContain('2100')
+  })
+
   it('取消工作日后只剩周末', async () => {
     const set = stub()
     render(<SettingsPanel onBack={() => {}} />)
@@ -167,6 +190,7 @@ describe('设置面板', () => {
   })
 
   it('周末两天时给出超过半年的提醒', async () => {
+    vi.spyOn(api, 'getStudyLevels').mockResolvedValue(LEVELS)
     vi.spyOn(api, 'getOverallStats').mockResolvedValue(STATS)
     vi.spyOn(api, 'setSetting').mockResolvedValue(undefined)
     vi.spyOn(api, 'setAutostart').mockResolvedValue(undefined)

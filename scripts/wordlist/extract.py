@@ -193,6 +193,12 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("source", help="ecdict.csv 路径")
     ap.add_argument("-o", "--output", required=True, help="输出 JSON 路径")
+    ap.add_argument(
+        "--include-cet4",
+        action="store_true",
+        help="额外收入四级词（ECDICT 的 cet4 标签），标为 level=cet4。"
+        "考纲之外的扩展，默认不收——高考备考期把四级词混进来会稀释重点",
+    )
     args = ap.parse_args()
 
     csv.field_size_limit(sys.maxsize)
@@ -204,7 +210,11 @@ def main() -> int:
     with open(args.source, newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
             tags = (row.get("tag") or "").split()
-            if "gk" not in tags and "zk" not in tags:
+            in_syllabus = "gk" in tags or "zk" in tags
+            # 四级词只在显式要求时收，且不覆盖考纲内的分级——
+            # 一个词既是高考词又是四级词时，它首先是高考词
+            is_cet4 = args.include_cet4 and "cet4" in tags
+            if not in_syllabus and not is_cet4:
                 continue
 
             word = (row.get("word") or "").strip().lower()
@@ -244,8 +254,14 @@ def main() -> int:
 
             band = frequency_band(as_int("bnc"), as_int("frq"))
 
-            # zk 词属初中范围，其余高考词为高中
-            level = "junior" if "zk" in tags else "senior"
+            # zk 词属初中范围，其余高考词为高中。
+            # 四级词单列一档：它在考纲之外，用户可以单独选择是否学
+            if "zk" in tags:
+                level = "junior"
+            elif "gk" in tags:
+                level = "senior"
+            else:
+                level = "cet4"
             edition = "both" if ("zk" in tags and "gk" in tags) else ("zk" if "zk" in tags else "gk")
 
             seen.add(word)

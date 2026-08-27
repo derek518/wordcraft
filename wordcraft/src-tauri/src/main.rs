@@ -120,6 +120,7 @@ fn main() {
             commands::zones::get_zone_progress,
             // 设置
             commands::config::get_setting,
+            commands::config::get_study_levels,
             commands::config::set_setting,
             // 平台能力
             tts::play_word_audio,

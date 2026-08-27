@@ -7,8 +7,7 @@ vi.mock('../core/sound', () => ({ playCorrect: vi.fn(), setSoundEnabled: vi.fn()
 
 const VALUES: Record<string, string> = {
   session_windows: '09:00-11:00,13:00-15:00,19:00-21:00',
-  daily_new_words: '6',
-  session_word_count: '20',
+  daily_new_words: '18',
   sound_enabled: 'true',
   tts_provider: 'edge',
   autostart_enabled: 'true',
@@ -28,7 +27,11 @@ const LEVELS: api.StudyLevelOption[] = [
   { value: 'all', label: '全部', words: 3657 },
 ]
 
+/** 后端推算的节奏。数值刻意与「天数×预算」不符，好验证界面确实在读它 */
+const PACE: api.Pace = { new_per_session: 6, session_words: 18, weekly_new: 126 }
+
 function stub() {
+  vi.spyOn(api, 'getPace').mockResolvedValue(PACE)
   vi.spyOn(api, 'getStudyLevels').mockResolvedValue(LEVELS)
   vi.spyOn(api, 'getOverallStats').mockResolvedValue(STATS)
   vi.spyOn(api, 'getSetting').mockImplementation(async (k) => VALUES[k] ?? null)
@@ -88,15 +91,15 @@ describe('设置面板', () => {
   })
 
   it('全部设置项都从后端读，界面不带默认值', async () => {
+    stub()
     const get = vi.spyOn(api, 'getSetting').mockImplementation(async (k) => VALUES[k] ?? null)
-    vi.spyOn(api, 'setSetting').mockResolvedValue(undefined)
 
     render(<SettingsPanel onBack={() => {}} />)
     await settle()
 
     // 契约 §2.1 的键；前端写死默认值会在后端改默认时静静分叉
     const asked = get.mock.calls.map((c) => c[0])
-    for (const k of ['session_windows', 'daily_new_words', 'session_word_count', 'tts_provider', 'autostart_enabled', 'study_level', 'study_days']) {
+    for (const k of ['session_windows', 'daily_new_words', 'tts_provider', 'autostart_enabled', 'study_level', 'study_days']) {
       expect(asked).toContain(k)
     }
   })
@@ -178,18 +181,61 @@ describe('设置面板', () => {
     expect(set).not.toHaveBeenCalledWith('study_days', expect.anything())
   })
 
-  it('按学习日与每场新词估算走完剩余生词的周数', async () => {
+  it('走完剩余生词的周数按后端给的周新词数算', async () => {
     stub()
     render(<SettingsPanel onBack={() => {}} />)
     await settle()
 
-    // 7 天 × 3 场 × 6 新词 = 126/周，2068 个生词约 17 周
+    // 2068 个生词 ÷ 126/周 ≈ 17 周
     expect(text()).toContain('2068')
     expect(text()).toContain('126')
     expect(text()).toContain('17')
   })
 
+  it('周新词数取后端返回值，不在界面上乘一遍', async () => {
+    stub()
+    // 刻意给一个「天数 × 预算」算不出的数：7 × 18 = 126，不是 100
+    vi.spyOn(api, 'getPace').mockResolvedValue({ ...PACE, weekly_new: 100 })
+    render(<SettingsPanel onBack={() => {}} />)
+    await settle()
+
+    // 界面自己乘会得到 17 周；读后端的话是 ceil(2068/100) = 21 周
+    expect(text()).toContain('21')
+    expect(text()).not.toContain('126')
+  })
+
+  it('每场新词数与题数由后端推算并显示', async () => {
+    stub()
+    vi.spyOn(api, 'getPace').mockResolvedValue({
+      new_per_session: 9, session_words: 27, weekly_new: 189,
+    })
+    render(<SettingsPanel onBack={() => {}} />)
+    await settle()
+
+    // 系数在 plan.rs。抄一份到界面上，后端调参后界面就开始说谎
+    expect(text()).toContain('每场约 9 个新词')
+    expect(text()).toContain('27 道题')
+  })
+
+  it('拖动时按滑块当前值问节奏，而不是已保存的值', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    stub()
+    const pace = vi.spyOn(api, 'getPace').mockResolvedValue(PACE)
+    render(<SettingsPanel onBack={() => {}} />)
+    await settle()
+
+    await act(async () => {
+      fireEvent.change(slider('18'), { target: { value: '30' } })
+    })
+    await settle()
+
+    // 读库只能反映已保存的值，防抖那 400ms 里数字会僵在原处
+    expect(pace).toHaveBeenCalledWith(30, 7)
+    vi.useRealTimers()
+  })
+
   it('周末两天时给出超过半年的提醒', async () => {
+    vi.spyOn(api, 'getPace').mockResolvedValue({ ...PACE, weekly_new: 36 })
     vi.spyOn(api, 'getStudyLevels').mockResolvedValue(LEVELS)
     vi.spyOn(api, 'getOverallStats').mockResolvedValue(STATS)
     vi.spyOn(api, 'setSetting').mockResolvedValue(undefined)
@@ -201,7 +247,7 @@ describe('设置面板', () => {
     render(<SettingsPanel onBack={() => {}} />)
     await settle()
 
-    // 2 天 × 3 场 × 6 = 36/周 → 58 周。默认配置是按「每天都能用」调的，
+    // 每周 36 个 → 58 周。默认配置是按「每天都能用」调的，
     // 改成只有周末之后界面上看不出任何区别，这条提醒就是那个区别
     expect(text()).toContain('58')
     expect(text()).toContain('超过半年')
@@ -220,7 +266,7 @@ describe('设置面板', () => {
     await settle()
 
     await act(async () => {
-      fireEvent.change(slider('20'), { target: { value: '29' } })
+      fireEvent.change(slider('18'), { target: { value: '29' } })
     })
     await act(async () => {
       await vi.advanceTimersByTimeAsync(500)
@@ -228,7 +274,7 @@ describe('设置面板', () => {
 
     // 先前挂在 onMouseUp 上，闭包捕获的是渲染时的旧值——
     // 点击滑轨会保存旧值再回写，滑块弹回原位
-    expect(set).toHaveBeenCalledWith('session_word_count', '29')
+    expect(set).toHaveBeenCalledWith('daily_new_words', '29')
     vi.useRealTimers()
   })
 
@@ -238,11 +284,9 @@ describe('设置面板', () => {
     render(<SettingsPanel onBack={() => {}} />)
     await settle()
 
-    for (const v of ['21', '25', '29']) {
+    for (const [from, to] of [['18', '21'], ['21', '25'], ['25', '29']]) {
       await act(async () => {
-        fireEvent.change(slider(v === '21' ? '20' : v === '25' ? '21' : '25'), {
-          target: { value: v },
-        })
+        fireEvent.change(slider(from), { target: { value: to } })
       })
     }
     await act(async () => {
@@ -250,7 +294,7 @@ describe('设置面板', () => {
     })
 
     // 拖一次滑块会连发几十个 change，每个都写库既慢又无谓
-    const calls = set.mock.calls.filter((c) => c[0] === 'session_word_count')
+    const calls = set.mock.calls.filter((c) => c[0] === 'daily_new_words')
     expect(calls).toHaveLength(1)
     expect(calls[0][1]).toBe('29')
     vi.useRealTimers()
@@ -264,26 +308,26 @@ describe('设置面板', () => {
 
     // 键盘只触发 change 不触发 mouseup——先前这条路上的改动静默丢失
     await act(async () => {
-      fireEvent.change(slider('6'), { target: { value: '7' } })
+      fireEvent.change(slider('18'), { target: { value: '19' } })
     })
     await act(async () => {
       await vi.advanceTimersByTimeAsync(500)
     })
 
-    expect(set).toHaveBeenCalledWith('daily_new_words', '7')
+    expect(set).toHaveBeenCalledWith('daily_new_words', '19')
     vi.useRealTimers()
   })
 
-  it('新词上限的标签说明它是每场而非每日', async () => {
+  it('学习量只有一个旋钮', async () => {
     stub()
     render(<SettingsPanel onBack={() => {}} />)
     await settle()
 
-    // 后端在每场 build() 里读这个值当本场配额，三个时段就是三倍。
-    // 标签写「每日」会让人以为设 14 就是一天 14 个，实际是 42
-    expect(text()).toContain('每场新词上限')
-    expect(text()).toContain('三倍')
-    expect(text()).not.toContain('每日新词上限')
+    // 每场题数与新词量之间有物理约束，两个都放出来会配出无法满足的组合：
+    // 「每场 40 题、每天 3 个新词」时那 37 题无处可来，队列静静地给不满
+    expect(text()).toContain('每日新词上限')
+    expect(text()).not.toContain('单场词量')
+    expect(document.querySelectorAll('input[type=range]')).toHaveLength(1)
   })
 
   it('拖完立刻离开页面，改动仍会落地', async () => {
@@ -293,7 +337,7 @@ describe('设置面板', () => {
     await settle()
 
     await act(async () => {
-      fireEvent.change(slider('20'), { target: { value: '26' } })
+      fireEvent.change(slider('18'), { target: { value: '26' } })
     })
     // 不等防抖到期就离开
     await act(async () => {
@@ -301,7 +345,7 @@ describe('设置面板', () => {
     })
 
     // 丢掉待提交的写入，等于用户白调了一次
-    expect(set).toHaveBeenCalledWith('session_word_count', '26')
+    expect(set).toHaveBeenCalledWith('daily_new_words', '26')
     vi.useRealTimers()
   })
 

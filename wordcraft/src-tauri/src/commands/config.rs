@@ -13,8 +13,9 @@ const WRITABLE: &[(&str, ValueKind)] = &[
     ("onboarding_done", ValueKind::Bool),
     ("placement_stage", ValueKind::IntRange(0, 2)),
     ("session_windows", ValueKind::SessionWindows),
-    ("daily_new_words", ValueKind::IntRange(0, 50)),
-    ("session_word_count", ValueKind::IntRange(1, 60)),
+    // 每日新词预算，学习量的唯一旋钮。单场题数由它推算（见 plan.rs），
+    // 不再是可写设置——两个能各自取值的旋钮会配出无法满足的组合
+    ("daily_new_words", ValueKind::IntRange(0, 60)),
     ("sound_enabled", ValueKind::Bool),
     ("autostart_enabled", ValueKind::Bool),
     ("tts_provider", ValueKind::OneOf(&["edge", "sapi", "off"])),
@@ -175,7 +176,6 @@ mod tests {
         for (key, sample) in [
             ("session_windows", "09:00-11:00,13:00-15:00,19:00-21:00"),
             ("daily_new_words", "6"),
-            ("session_word_count", "20"),
             ("sound_enabled", "true"),
             ("autostart_enabled", "false"),
             ("tts_provider", "off"),
@@ -218,15 +218,32 @@ mod tests {
     }
 
     #[test]
+    fn 节奏投影按时段均分并封顶() {
+        // 每日 18 → 每场 6 新词、18 题，一周七天 126 个
+        assert_eq!(
+            get_pace(18, 7),
+            Pace { new_per_session: 6, session_words: 18, weekly_new: 126 }
+        );
+        // 只有周末：同样的滑块位置意味着完全不同的进度
+        assert_eq!(get_pace(18, 2).weekly_new, 36);
+        // 预算为 0 时仍给出复习场的题数，不是 0 题
+        assert!(get_pace(0, 7).session_words > 0);
+        // 负数不产生负配额
+        assert_eq!(get_pace(-5, 7).weekly_new, 0);
+    }
+
+    #[test]
     fn 整数键强制范围() {
         assert!(validate("daily_new_words", "6").is_ok());
         assert!(validate("daily_new_words", "0").is_ok());
-        assert!(validate("daily_new_words", "51").is_err());
+        assert!(validate("daily_new_words", "61").is_err());
         assert!(validate("daily_new_words", "-1").is_err());
         assert!(validate("daily_new_words", "六").is_err());
 
-        assert!(validate("session_word_count", "20").is_ok());
-        assert!(validate("session_word_count", "0").is_err());
+        assert!(validate("daily_new_words", "18").is_ok());
+        assert!(validate("daily_new_words", "61").is_err());
+        // 单场题数已由 plan 推算，不再可写——留着会被重新接上
+        assert!(validate("session_word_count", "20").is_err());
     }
 
     #[test]
@@ -267,6 +284,36 @@ mod tests {
 ///
 /// 由数据库现查，前端不写死。词库一更新，选项与数字自动跟上——
 /// 写死的计数在本项目已经三次变成谎话。
+/// 由每日新词预算推算出的节奏，供设置界面展示。
+///
+/// 前端不自己算：`WORDS_PER_NEW` 与单场题数的上下限都在 plan.rs，抄一份到
+/// 界面上意味着后端调参后界面开始说谎——本项目已经三次栽在写死的数字上。
+#[derive(Debug, PartialEq, serde::Serialize)]
+pub struct Pace {
+    /// 三时段均分时每场的新词数
+    pub new_per_session: i64,
+    /// 每场题数
+    pub session_words: i64,
+    /// 每周新词数（按传入的学习天数）
+    pub weekly_new: i64,
+}
+
+/// 纯投影：不读库，只回答「预算取 N 时节奏是什么样」。
+///
+/// 不读库是为了让滑块即时响应——读库只能反映已保存的值，拖动过程中
+/// 界面会滞后于滑块，看起来像卡住了。
+#[tauri::command]
+pub fn get_pace(daily_budget: i64, study_days: i64) -> Pace {
+    let budget = daily_budget.max(0);
+    // 以「一天从头开始的早场」为代表：这是用户实际会遇到的典型情况
+    let plan = crate::plan::compute(budget, 0, "morning");
+    Pace {
+        new_per_session: plan.new_quota,
+        session_words: plan.session_words,
+        weekly_new: budget * study_days.clamp(0, 7),
+    }
+}
+
 #[tauri::command]
 pub fn get_study_levels(db: State<Db>) -> Result<Vec<crate::scope::LevelOption>, String> {
     let conn = db.0.lock().map_err(|e| format!("获取数据库锁失败: {e}"))?;

@@ -70,7 +70,11 @@ mod tests {
     #[test]
     fn 迁移写入的默认值可读() {
         let conn = db();
-        assert_eq!(get(&conn, "daily_new_words").unwrap().as_deref(), Some("6"));
+        // 001 插入的 "6" 是旧的每场语义，012 换算成每日 18
+        assert_eq!(
+            get(&conn, "daily_new_words").unwrap().as_deref(),
+            Some("18")
+        );
         assert_eq!(get(&conn, "tts_provider").unwrap().as_deref(), Some("edge"));
     }
 

@@ -8,7 +8,7 @@
 //! `src/core/stateMachine.ts`），以及此处的三档自适应配额。单独任何一项都不够：
 //! 只放宽离队余量太小，只降新词则系统长期停在「暂停新词清池」状态、新词进度腰斩。
 
-use crate::db::{clock, repo::settings, Db};
+use crate::db::{clock, Db};
 use rusqlite::{Connection, Row};
 use serde::Serialize;
 use std::collections::HashSet;
@@ -32,9 +32,6 @@ pub const MERGED_LIMIT: i64 = 30;
 /// 抽查的目的是抓摸底假阳性，那是抽样，不是把每条判断都重考一遍。
 /// 每场留两格，既能持续验证，又不至于饿死新词。
 pub const PROBE_PER_SESSION: i64 = 2;
-
-/// 单场词量缺省值。前端不传 limit 时从 settings 读取，缺键才用此值。
-const DEFAULT_SESSION_WORDS: i64 = 20;
 
 /// 自适应阈值。R 为强化池大小。
 const RELAXED_MAX: i64 = 15;
@@ -272,8 +269,9 @@ pub fn build(
     let scope_sql = crate::scope::current(conn)?.sql_filter();
 
     let pool = word_states::count_by_app_state(conn, "reinforcing")?;
-    let configured_new = settings::get_int(conn, "daily_new_words", 6)?;
-    let quota = adaptive_quota(pool, configured_new);
+    // 本场新词配额由每日预算按剩余时段推算（见 plan.rs），不是独立设置项
+    let plan = crate::plan::for_session(conn, &today, session_type)?;
+    let quota = adaptive_quota(pool, plan.new_quota);
     let now = clock::now();
 
     let mut items: Vec<QueueItem> = Vec::new();
@@ -352,8 +350,8 @@ pub fn build(
 
 /// contracts §3.1：返回本次会话的词队列。
 ///
-/// `limit` 省略时从 `settings.session_word_count` 读取——单场词量是产品参数
-/// （决议 S13 定为 20），前端不应硬编码。
+/// `limit` 省略时由 `plan` 按每日新词预算推算——单场题数不是独立设置项，
+/// 让它与新词量各自取值会配出无法满足的组合（见 plan.rs）。
 ///
 /// 校验在边界处完成：非法 `session_type` 立即拒绝，不静默降级为默认值。
 #[tauri::command]
@@ -376,7 +374,7 @@ pub fn get_session_queue(
     let limit = match limit {
         Some(n) if n > 0 => n,
         Some(n) => return Err(format!("limit 必须为正数，收到 {n}")),
-        None => settings::get_int(&conn, "session_word_count", DEFAULT_SESSION_WORDS)?,
+        None => crate::plan::for_session(&conn, &clock::today(), &session_type)?.session_words,
     };
 
     build(&conn, &session_type, limit)
@@ -508,9 +506,13 @@ mod tests {
         assert_eq!(q.len(), 5);
         assert!(q.iter().all(|i| i.source == QueueSource::New));
 
-        // daily_new_words 默认 6，limit=10 时新词仍被配额卡在 6
+        // 每日预算 18 分三个时段，早场配额 6——limit=10 仍被配额卡住
+        let q = build(&conn, "morning", 10).unwrap();
+        assert_eq!(q.len(), 6, "新词数应受每日预算的时段配额限制");
+
+        // 自由练习按「最后一场」处理，把当天剩余预算一次给足
         let q = build(&conn, "free", 10).unwrap();
-        assert_eq!(q.len(), 6, "新词数应受 daily_new_words 限制");
+        assert_eq!(q.len(), 10, "自由练习应能领走当天剩余预算");
     }
 
     #[test]

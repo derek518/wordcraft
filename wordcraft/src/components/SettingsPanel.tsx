@@ -26,8 +26,7 @@ const TTS_OPTIONS = [
 
 export default function SettingsPanel({ onBack }: SettingsPanelProps) {
   const [windows, setWindows] = useState('')
-  const [newWords, setNewWords] = useState('6')
-  const [wordCount, setWordCount] = useState('20')
+  const [newWords, setNewWords] = useState(String(api.DEFAULT_DAILY_NEW))
   const [sound, setSound] = useState(true)
   const [tts, setTts] = useState('edge')
   const [studyLevel, setStudyLevel] = useState('senior')
@@ -41,10 +40,9 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
 
   const load = useCallback(async () => {
     try {
-      const [w, n, c, s, t, a, lv, sd, st, lo] = await Promise.all([
+      const [w, n, s, t, a, lv, sd, st, lo] = await Promise.all([
         api.getSetting('session_windows'),
         api.getSetting('daily_new_words'),
-        api.getSetting('session_word_count'),
         api.getSetting('sound_enabled'),
         api.getSetting('tts_provider'),
         api.getSetting('autostart_enabled'),
@@ -54,8 +52,7 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
         api.getStudyLevels(),
       ])
       setWindows(w ?? WINDOW_PRESETS[0].value)
-      setNewWords(n ?? '6')
-      setWordCount(c ?? '20')
+      setNewWords(n ?? String(api.DEFAULT_DAILY_NEW))
       setSound(s !== 'false')
       setTts(t ?? 'edge')
       setAutostart(a !== 'false')
@@ -73,18 +70,36 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
   }, [load])
 
   /**
+   * 每日预算推算出的节奏。**每场新词数与每场题数都由后端算**——
+   * 那些系数在 plan.rs，抄到界面上就成了一份迟早过期的副本。
+   *
+   * 传预算而不是读库，是为了让滑块拖动时数字即时跟着走；读库只能反映
+   * 已保存的值，界面会滞后于滑块，看起来像卡住了。
+   */
+  const [pace, setPace] = useState<api.Pace | null>(null)
+  const studyDayCount = studyDays.split(',').filter(Boolean).length
+
+  useEffect(() => {
+    let alive = true
+    api
+      .getPace(Number(newWords || '0'), studyDayCount)
+      .then((p) => alive && setPace(p))
+      .catch((e) => alive && setError(e instanceof Error ? e.message : String(e)))
+    return () => {
+      alive = false
+    }
+  }, [newWords, studyDayCount])
+
+  /**
    * 按当前配置走完剩余生词需要多久。
    *
    * 把这笔账摆出来，是因为它不摆出来就没人算：默认配置是按「每天都能用」
    * 调的，改成只有周末之后同样的滑块意味着一年多——而界面上看不出任何区别。
    */
-  const projection = (() => {
-    if (remaining === null || remaining <= 0) return null
-    const days = studyDays.split(',').filter(Boolean).length
-    const perWeek = days * 3 * Number(newWords || '0')
-    if (perWeek <= 0) return null
-    return { weeks: Math.ceil(remaining / perWeek), perWeek, remaining }
-  })()
+  const projection =
+    remaining !== null && remaining > 0 && pace && pace.weekly_new > 0
+      ? { weeks: Math.ceil(remaining / pace.weekly_new), perWeek: pace.weekly_new, remaining }
+      : null
 
   /**
    * 滑块的保存。停手 400ms 后提交一次。
@@ -248,39 +263,26 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
         </Row>
 
         <Row
-          title="每场新词上限"
-          hint="每个时段最多引入的新词数。三个时段合计约为三倍——设 6 则一天约 18 个。实际数量还会受强化队列大小自动调节。调高会让复习负担同步上升：每学 1 个新词约产生 9 次后续复习。"
+          title="每日新词上限"
+          hint="一天最多学几个新词。每场的新词数与题数都由它推算，不需要单独设置——两个能各自取值的旋钮会配出无法满足的组合。已经学过的新词会从当天预算里扣除，所以跳过一个时段，剩下的时段会自动补上。"
           settingKey="daily_new_words"
         >
           <div className="flex items-center gap-3">
             <input
               type="range"
               min={0}
-              max={20}
+              max={60}
               value={newWords}
               onChange={(e) => saveDebounced('daily_new_words', e.target.value, setNewWords)}
               className="flex-1 accent-wc-primary"
             />
-            <span className="font-game-mono w-10 text-right text-wc-accent">{newWords}</span>
+            <span className="font-game-mono w-12 text-right text-wc-accent">{newWords}</span>
           </div>
-        </Row>
-
-        <Row
-          title="单场词量"
-          hint="一次训练的题目**上限**。凑不够不会硬凑——没有到期复习时，实际题数就等于「每场新词上限」加上少量强化词。20 词约 3-4 分钟。"
-          settingKey="session_word_count"
-        >
-          <div className="flex items-center gap-3">
-            <input
-              type="range"
-              min={5}
-              max={40}
-              value={wordCount}
-              onChange={(e) => saveDebounced('session_word_count', e.target.value, setWordCount)}
-              className="flex-1 accent-wc-primary"
-            />
-            <span className="font-game-mono w-10 text-right text-wc-accent">{wordCount}</span>
-          </div>
+          {pace && (
+            <div className="mt-2 text-xs text-wc-text-muted font-game-mono">
+              每场约 {pace.new_per_session} 个新词 · {pace.session_words} 道题
+            </div>
+          )}
         </Row>
 
         <Row title="音效" hint="答对、答错、升级的即时反馈音。" settingKey="sound_enabled">

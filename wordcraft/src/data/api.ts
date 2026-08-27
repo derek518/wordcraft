@@ -61,7 +61,7 @@ export interface ImportOutcome {
 export const importWords = (payload: WordImport[]) =>
   call<ImportOutcome>('import_words', { payload })
 
-/** limit 省略时由后端读取 settings.session_word_count（决议 S13 定为 20） */
+/** limit 省略时由后端按每日新词预算推算单场题数（见 src-tauri/src/plan.rs） */
 export const getSessionQueue = (sessionType: SessionType, limit?: number) =>
   call<QueueItem[]>('get_session_queue', { sessionType, limit: limit ?? null })
 
@@ -381,6 +381,30 @@ export interface StudyLevelOption {
 
 /** 可选学习范围。词数由后端现查——写死的计数在本项目已三次变成谎话 */
 export const getStudyLevels = () => call<StudyLevelOption[]>('get_study_levels')
+
+/**
+ * 每日新词预算的缺省值。**唯一允许存在的副本**，与 `plan::DEFAULT` 对应。
+ *
+ * 只在设置面板读到值之前占位；`settings` 表由迁移 001 播种，正常路径上
+ * 永远读得到，所以这个值不会真正影响学习节奏。
+ */
+export const DEFAULT_DAILY_NEW = 18
+
+export interface Pace {
+  /** 三时段均分时每场的新词数 */
+  new_per_session: number
+  /** 每场题数 */
+  session_words: number
+  /** 每周新词数 */
+  weekly_new: number
+}
+
+/**
+ * 每日预算推算出的节奏。纯投影，不读库——传入的是滑块当前值而非已保存值，
+ * 这样拖动时数字即时跟着走。系数与上下限都在后端，界面不留副本。
+ */
+export const getPace = (dailyBudget: number, studyDays: number) =>
+  call<Pace>('get_pace', { dailyBudget, studyDays })
 
 export const getSetting = (key: string) => call<string | null>('get_setting', { key })
 export const setSetting = (key: string, value: string) =>

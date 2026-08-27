@@ -198,6 +198,9 @@ const HANDLERS: Record<string, (args?: Record<string, unknown>) => unknown> = {
       tts_provider: 'edge',
       season_milestone_seen: '0',
       session_windows: '09:00-11:00,13:00-15:00,19:00-21:00',
+      daily_new_words: '18',
+      study_level: 'senior',
+      study_days: '1,2,3,4,5,6,7',
     } as Record<string, string>)[key] ?? null
   },
 
@@ -235,6 +238,15 @@ const HANDLERS: Record<string, (args?: Record<string, unknown>) => unknown> = {
   search_words: () => [],
   play_word_audio: () => null,
   postpone_session: () => ({ remaining: 2 }),
+  get_pace: (args) => {
+    const budget = (args?.dailyBudget as number) ?? 18
+    const perSession = Math.ceil(budget / 3)
+    return {
+      new_per_session: perSession,
+      session_words: Math.min(40, Math.max(12, perSession * 3)),
+      weekly_new: budget * ((args?.studyDays as number) ?? 7),
+    }
+  },
   set_setting: () => null,
   set_autostart: () => null,
   export_data_json: () => '{"ok":true}',

@@ -101,8 +101,9 @@ pub fn snooze_popup(app: AppHandle) -> Result<(), String> {
     let session_type = take_pending()?.unwrap_or_else(|| "morning".into());
     let db = app.state::<Db>();
     let conn = db.0.lock().map_err(|e| format!("获取数据库锁失败: {e}"))?;
-    let planned = settings::get_int(&conn, "session_word_count", 20)?;
-    let session = sessions::start(&conn, &clock::today(), &session_type, planned, &clock::now())?;
+    let today = clock::today();
+    let planned = crate::plan::for_session(&conn, &today, &session_type)?.session_words;
+    let session = sessions::start(&conn, &today, &session_type, planned, &clock::now())?;
     crate::commands::session::record_postpone(&conn, session.id)?;
     hide_popup(&app)
 }

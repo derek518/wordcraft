@@ -11,6 +11,7 @@ mod commands;
 mod db;
 mod homestead;
 mod placement;
+mod plan;
 mod platform;
 mod progression;
 mod queue;
@@ -121,6 +122,7 @@ fn main() {
             // 设置
             commands::config::get_setting,
             commands::config::get_study_levels,
+            commands::config::get_pace,
             commands::config::set_setting,
             // 平台能力
             tts::play_word_audio,

@@ -148,16 +148,33 @@ CREATE TABLE settings (
 | `schema_initialized` | `"true"` | 初始化完成标记（替代原 `first_run`） |
 | `onboarding_done` | `"false"` | 摸底测试是否完成 |
 | `session_windows` | `"09:00-11:00,13:00-15:00,19:00-21:00"` | spec F1 三时段 |
-| `daily_new_words` | `"6"` | spec §7.2；**运行时受 §4.1 自适应调制**，此为上限而非定值。T15 验证真实词表规模后可能下调至 4 |
+| `daily_new_words` | `"18"` | **每日**新词预算（迁移 012 起；此前为每场，旧值 ×3 换算）。学习量的唯一旋钮——单场题数与每场新词配额都由它推算，见 `src-tauri/src/plan.rs`。**运行时仍受 §4.1 自适应调制**，此为上限而非定值 |
 | `placement_stage` | `"0"` | 摸底进度：0=未开始 1=进行中 2=已完成（支持分两次） |
 | `daily_pause_date` | `""` | 今日暂停激活的日期，空串表示未激活 |
-| `session_word_count` | `"20"` | 单场词量（migration 002，决议 S13）。**前端不得硬编码**，`get_session_queue` 省略 `limit` 时由后端读取 |
 | `sound_enabled` | `"true"` | |
 | `autostart_enabled` | `"true"` | |
 | `tts_provider` | `"edge"` | `edge` \| `sapi` \| `off` |
 | `season_milestone_seen` | `"0"` | 已庆祝过的最高赛道里程碑（时段数）。庆祝在**跨过的那一刻放一次**，靠这个键保证不会每次打开赛道页都重放 |
 | `postpone_until` | `""` | 延后到期时刻（UTC ISO8601）。空串表示当前没有延后。调度器在此之前不重复弹出同一时段 |
 | `postpone_session_type` | `""` | 正在延后的时段 `morning`/`noon`/`evening` |
+
+> **迁移 012 · 学习量合并为单一旋钮**
+>
+> `session_word_count` 已删除，`daily_new_words` 语义由「每场」改为「每日」。
+>
+> 原因：两者之间存在物理约束——每个新词当天还会带来若干次复习，单场题数
+> 不可能独立于新词量取值。两个旋钮各自可调时能配出无法满足的组合
+> （「每场 40 题、每天 3 个新词」时那 37 题无处可来），队列静静地给不满，
+> 而界面上看不出任何异常。
+>
+> 另一个原因是 `daily_new_words` 的旧语义有误导性：后端在**每个时段**的
+> `build()` 里各读一次，三时段就是三倍——设 14 实际是每天 42 个。
+> 迁移 012 把旧值 ×3（封顶 60）以保持用户当前的实际学习量不变。
+>
+> 推算规则见 `src-tauri/src/plan.rs`：预算按**剩余时段**均分（跳过早场则中午
+> 和晚上各领一半），当天已学的新词从预算里扣除；单场题数 = 每场新词 × 3，
+> 夹在 12–40 之间。`get_pace(daily_budget, study_days)` 供界面展示推算结果，
+> 是纯投影，不读库。
 
 ---
 
@@ -171,7 +188,7 @@ CREATE TABLE settings (
 ```rust
 /// 按 §4.1 自适应配额返回本次 session 的词。
 /// 排队优先级：强化中 > 到期复习(due_at<=now) > 摸底抽查 > 新词(受 daily_new_words 限额)
-/// limit 省略时读 settings.session_word_count（默认 20，决议 S13）
+/// limit 省略时由 plan.rs 按 daily_new_words 推算单场题数
 get_session_queue(session_type: String, limit: Option<i64>) -> Result<Vec<QueueItem>, String>
 
 /// 返回指定词的干扰项候选池（同词性、编辑距离近的词），由前端组题。

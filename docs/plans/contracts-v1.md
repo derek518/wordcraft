@@ -39,10 +39,12 @@ CREATE TABLE words (
   example_2       TEXT NOT NULL DEFAULT '',
   level           TEXT NOT NULL,                    -- 'junior' | 'senior' | 'cet4' | 'art'
   frequency_band  INTEGER NOT NULL,                 -- 1..5, 1 = 最高频
+  frequency_rank  INTEGER,                          -- 全局词频排名（迁移 013）；可空
   zone            TEXT NOT NULL,                    -- 'newbie'|'grass'|'water'|'fire'|'thunder'|'ice'|'rock'
   created_at      TEXT NOT NULL
 );
 CREATE INDEX idx_words_zone_band ON words(zone, frequency_band);
+CREATE INDEX idx_words_rank ON words(frequency_rank);
 CREATE INDEX idx_words_pos       ON words(pos);     -- 干扰项按同词性检索
 
 CREATE TABLE word_states (

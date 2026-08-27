@@ -48,6 +48,13 @@ export interface WordImport {
   example_2: string
   level: string
   frequency_band: number
+  /**
+   * 全局词频排名，能力模型的难度轴。
+   *
+   * `null` 表示两个语料库都未收录（18 个连字符复合词）。不插补——
+   * 编一个排名会让能力模型把凭空捏造的难度当成证据。
+   */
+  frequency_rank: number | null
   zone: string
   source_edition: string
 }

@@ -202,6 +202,7 @@ mod tests {
                 example_2: String::new(),
                 level: "senior".into(),
                 frequency_band: 3,
+                frequency_rank: None,
                 zone: "grass".into(),
                 source_edition: String::new(),
             })

@@ -77,18 +77,28 @@ const MIGRATIONS: &[Migration] = &[
         name: "single_pace_knob",
         sql: include_str!("migrations/012_single_pace_knob.sql"),
     },
+    Migration {
+        version: 13,
+        name: "frequency_rank",
+        sql: include_str!("migrations/013_frequency_rank.sql"),
+    },
 ];
 
 /// 执行所有未应用的迁移，返回本次实际应用的版本号。
 ///
 /// 幂等：已应用的迁移会被跳过，重复调用返回空 Vec。
 pub fn run(conn: &mut Connection) -> Result<Vec<i64>, String> {
+    run_up_to(conn, i64::MAX)
+}
+
+/// 只应用到指定版本为止。供测试模拟「老用户的库停在版本 N」。
+fn run_up_to(conn: &mut Connection, max_version: i64) -> Result<Vec<i64>, String> {
     ensure_ledger(conn)?;
     let applied = applied_versions(conn)?;
 
     let mut newly_applied = Vec::new();
     for migration in MIGRATIONS {
-        if applied.contains(&migration.version) {
+        if migration.version > max_version || applied.contains(&migration.version) {
             continue;
         }
         apply(conn, migration)?;
@@ -208,6 +218,7 @@ mod tests {
             &[
                 "id", "word", "phonetic", "pos", "meaning", "example_1", "example_2",
                 "level", "frequency_band", "zone", "source_edition", "created_at",
+                "frequency_rank",
             ],
         ),
         (
@@ -327,25 +338,23 @@ mod tests {
     /// 用户库上启动即崩。这条测试先造出引用关系，再跑迁移。
     #[test]
     fn 带数据的库能跑完全部迁移() {
-        use crate::db::repo::{word_states, words};
+        use crate::db::repo::word_states;
 
+        // 停在倒数第二个版本，模拟「老用户的库」，再让最后一条迁移
+        // 在有数据的库上跑。先前是删掉最后一条账本再重跑一遍，那要求
+        // 迁移 SQL 可重入——`ALTER TABLE ADD COLUMN` 天生做不到
+        let last = MIGRATIONS.last().unwrap().version;
         let mut conn = crate::test_support::in_memory_db();
-        run(&mut conn).unwrap();
+        run_up_to(&mut conn, last - 1).unwrap();
 
-        words::import(
-            &mut conn,
-            &[words::WordImport {
-                word: "crystal".into(),
-                phonetic: "/ˈkrɪstl/".into(),
-                pos: "n.".into(),
-                meaning: "水晶".into(),
-                example_1: "A crystal lights the cave.".into(),
-                example_2: String::new(),
-                level: "senior".into(),
-                frequency_band: 1,
-                zone: "newbie".into(),
-                source_edition: String::new(),
-            }],
+        // 用裸 SQL 而非 words::import：repo 层写的是**当前**版本的列，
+        // 而这里的库停在旧版本。老库里的数据本来就是老 schema 写进去的
+        conn.execute(
+            "INSERT INTO words (word, phonetic, pos, meaning, example_1, example_2,
+                                level, frequency_band, zone, source_edition, created_at)
+             VALUES ('crystal', '/ˈkrɪstl/', 'n.', '水晶', 'A crystal lights the cave.',
+                     '', 'senior', 1, 'newbie', '', ?1)",
+            [crate::db::clock::now()],
         )
         .unwrap();
 
@@ -377,12 +386,8 @@ mod tests {
         )
         .unwrap();
 
-        // 只回退最后一条迁移的账本，让它在**有数据**的库上重跑一次。
-        // 删整张账本会让迁移 1 在已有表的库上重放，测的就不是这件事了
-        let last = MIGRATIONS.last().unwrap().version;
-        conn.execute("DELETE FROM schema_migrations WHERE version = ?1", [last])
-            .unwrap();
-        run(&mut conn).expect("最后一条迁移在有数据的库上失败");
+        let applied = run(&mut conn).expect("最后一条迁移在有数据的库上失败");
+        assert_eq!(applied, vec![last], "应恰好补上最后一条迁移");
 
         assert_eq!(
             conn.query_row("SELECT COUNT(*) FROM words", [], |r| r.get::<_, i64>(0)).unwrap(),
@@ -407,7 +412,7 @@ mod tests {
         let first = run(&mut conn).expect("首次迁移失败");
         assert_eq!(
             first,
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
             "首次应用全部迁移"
         );
 

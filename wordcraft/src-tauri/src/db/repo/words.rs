@@ -41,6 +41,12 @@ pub struct WordImport {
     pub example_2: String,
     pub level: String,
     pub frequency_band: i64,
+    /// 全局词频排名，能力模型的难度轴。
+    ///
+    /// 可空：18 个连字符复合词两个语料库都未收录。不插补——
+    /// 编一个排名会让能力模型把凭空捏造的难度当成证据。
+    #[serde(default)]
+    pub frequency_rank: Option<i64>,
     pub zone: String,
     #[serde(default)]
     pub source_edition: String,
@@ -467,8 +473,8 @@ pub fn import(conn: &mut Connection, items: &[WordImport]) -> Result<ImportOutco
         tx.execute(
             "INSERT INTO words
                (word, phonetic, pos, meaning, example_1, example_2,
-                level, frequency_band, zone, source_edition, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                level, frequency_band, frequency_rank, zone, source_edition, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
              ON CONFLICT(word) DO UPDATE SET
                phonetic = excluded.phonetic,
                pos = excluded.pos,
@@ -477,6 +483,7 @@ pub fn import(conn: &mut Connection, items: &[WordImport]) -> Result<ImportOutco
                example_2 = excluded.example_2,
                level = excluded.level,
                frequency_band = excluded.frequency_band,
+               frequency_rank = excluded.frequency_rank,
                zone = excluded.zone,
                source_edition = excluded.source_edition",
             rusqlite::params![
@@ -488,6 +495,7 @@ pub fn import(conn: &mut Connection, items: &[WordImport]) -> Result<ImportOutco
                 item.example_2,
                 item.level,
                 item.frequency_band,
+                item.frequency_rank,
                 item.zone,
                 item.source_edition,
                 now,
@@ -528,6 +536,7 @@ mod tests {
             example_2: String::new(),
             level: "junior".into(),
             frequency_band: 1,
+            frequency_rank: None,
             zone: "newbie".into(),
             source_edition: "renjiao".into(),
         }
@@ -930,6 +939,7 @@ mod tests {
             example_2: "The racing program on TV starts at eight tonight.".into(),
             level: "cet4".into(),
             frequency_band: 1,
+            frequency_rank: None,
             zone: "water".into(),
             source_edition: "gk".into(),
         };

@@ -177,6 +177,7 @@ mod tests {
                 // 过滤挡掉，下面测的就不是统计逻辑了
                 level: "senior".into(),
                 frequency_band: 1,
+                frequency_rank: None,
                 zone: "newbie".into(),
                 source_edition: String::new(),
             })

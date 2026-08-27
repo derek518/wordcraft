@@ -280,6 +280,7 @@ mod tests {
             example_2: String::new(),
             level: level.into(),
             frequency_band: 1,
+            frequency_rank: None,
             zone: "newbie".into(),
             source_edition: String::new(),
         }

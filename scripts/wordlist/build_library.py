@@ -70,6 +70,21 @@ def contains_word(sentence: str, word: str) -> bool:
     return re.search(rf"\b{stem}\w*", sentence, re.IGNORECASE) is not None
 
 
+def frequency_rank(w: dict) -> int | None:
+    """全局词频排名，取 BNC 与当代语料库中较高频的那个。
+
+    这是**难度轴**：能力模型按它推断「这个词孩子会不会」。
+    `frequency_band` 是它压成 5 档的产物，5278 个词分 5 桶太粗——
+    一个桶上千个词，无法区分 the 和排在第 900 名的词。
+
+    两个语料库都未收录时返回 None，不做插补。这 18 个词多是
+    连字符复合词（ice-cream / father-in-law / cd-rom），编一个排名
+    会让能力模型把凭空捏造的难度当成证据。宁可标为未知。
+    """
+    ranks = [r for r in (w.get("bnc", 0), w.get("frq", 0)) if r and r > 0]
+    return min(ranks) if ranks else None
+
+
 def validate(item: dict) -> str | None:
     """按契约 §8 校验，返回拒绝原因；通过则返回 None。"""
     w = item["word"]
@@ -92,6 +107,9 @@ def validate(item: dict) -> str | None:
         return f"例句含受版权保护的专有名词 `{banned}`"
     if item["frequency_band"] not in (1, 2, 3, 4, 5):
         return f"frequency_band `{item['frequency_band']}` 越界"
+    rank = item["frequency_rank"]
+    if rank is not None and (not isinstance(rank, int) or rank < 1):
+        return f"frequency_rank `{rank}` 非法（应为正整数或 null）"
     if item["level"] not in VALID_LEVELS:
         return f"level `{item['level']}` 不在受控词表"
     if item["zone"] not in VALID_ZONES:
@@ -118,6 +136,7 @@ def main() -> int:
             "example_2": ex.get("example_2", ""),
             "level": w["level"],
             "frequency_band": w["frequency_band"],
+            "frequency_rank": frequency_rank(w),
             "zone": w["zone"],
             "source_edition": w["source_edition"],
         }

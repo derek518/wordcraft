@@ -404,6 +404,7 @@ mod tests {
                     example_2: String::new(),
                     level: "junior".into(),
                     frequency_band: band,
+                    frequency_rank: None,
                     zone: "newbie".into(),
                     source_edition: String::new(),
                 });
@@ -421,6 +422,7 @@ mod tests {
                 example_2: String::new(),
                 level: "senior".into(),
                 frequency_band: 1,
+                frequency_rank: None,
                 zone: "grass".into(),
                 source_edition: String::new(),
             });

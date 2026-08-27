@@ -187,6 +187,7 @@ mod tests {
                     // 其实是「范围过滤把一切挡光了」，而不是魔王逻辑本身
                     level: "senior".into(),
                     frequency_band: 1,
+                    frequency_rank: None,
                     zone: "newbie".into(),
                     source_edition: String::new(),
                 }
@@ -333,6 +334,7 @@ mod integration_tests {
                 example_2: String::new(),
                 level: "senior".into(),
                 frequency_band: 2,
+                frequency_rank: None,
                 zone: "grass".into(),
                 source_edition: String::new(),
             }],

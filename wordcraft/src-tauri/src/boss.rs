@@ -60,21 +60,31 @@ fn lock(db: &Db) -> Result<std::sync::MutexGuard<'_, Connection>, String> {
 /// 待讨伐的魔王，按顽固程度排序。
 #[tauri::command]
 pub fn get_boss_words(db: State<Db>, limit: i64) -> Result<Vec<BossWord>, String> {
+    let conn = lock(&db)?;
+    boss_words(&conn, limit)
+}
+
+/// 取魔王列表。与 command 分开是为了让测试打在**真查询**上——
+/// 先前的测试自己重写了一遍 SQL，改生产代码时它一声不吭。
+pub fn boss_words(conn: &Connection, limit: i64) -> Result<Vec<BossWord>, String> {
     if !(1..=50).contains(&limit) {
         return Err(format!("limit 必须在 1..50，收到 {limit}"));
     }
-    let conn = lock(&db)?;
 
-    let defeated = blocks::granted_keys(&conn, "boss")?;
+    let defeated = blocks::granted_keys(conn, "boss")?;
+
+    // 魔王同样是练习，同样受学习范围约束。设置页承诺「已练过的范围外单词
+    // 也不再排入」——这条路上不过滤的话，切到四级后仍会被高中词堵住
+    let scope_sql = crate::scope::current(conn)?.sql_filter();
 
     let mut stmt = conn
-        .prepare(
+        .prepare(&format!(
             "SELECT w.id, w.word, w.phonetic, w.pos, w.meaning, w.example_1, s.lapses
              FROM word_states s JOIN words w ON w.id = s.word_id
-             WHERE s.lapses >= ?1
+             WHERE s.lapses >= ?1 AND {scope_sql}
              ORDER BY s.lapses DESC, s.due_at ASC
-             LIMIT ?2",
-        )
+             LIMIT ?2"
+        ))
         .map_err(|e| format!("准备魔王查询失败: {e}"))?;
 
     let rows = stmt
@@ -173,7 +183,9 @@ mod tests {
                     meaning: format!("释义{i}"),
                     example_1: format!("A {w} appears."),
                     example_2: String::new(),
-                    level: "junior".into(),
+                    // senior：与默认学习范围一致。用 junior 的话，下面测的
+                    // 其实是「范围过滤把一切挡光了」，而不是魔王逻辑本身
+                    level: "senior".into(),
                     frequency_band: 1,
                     zone: "newbie".into(),
                     source_edition: String::new(),
@@ -222,15 +234,34 @@ mod tests {
         set_lapses(&conn, 2, 2, 1);
         set_lapses(&conn, 3, 5, 1);
 
-        let mut stmt = conn
-            .prepare("SELECT word_id FROM word_states WHERE lapses >= ?1 ORDER BY lapses DESC")
-            .unwrap();
-        let ids: Vec<i64> = stmt
-            .query_map([BOSS_LAPSE_THRESHOLD], |r| r.get(0))
+        let ids: Vec<i64> = boss_words(&conn, 10)
             .unwrap()
-            .map(|r| r.unwrap())
+            .iter()
+            .map(|b| b.word_id)
             .collect();
         assert_eq!(ids, vec![3, 2], "应按顽固程度排序且排除未达阈值的");
+    }
+
+    #[test]
+    fn 魔王也受学习范围约束() {
+        let conn = db();
+        set_lapses(&conn, 1, 5, 1);
+        assert_eq!(boss_words(&conn, 10).unwrap().len(), 1);
+
+        // 设置页承诺「已练过的范围外单词也不再排入」。魔王同样是练习，
+        // 这条路上不过滤的话，切到四级后仍会被高中词堵住
+        crate::db::repo::settings::set(&conn, crate::scope::SETTING_KEY, "cet4").unwrap();
+        assert!(
+            boss_words(&conn, 10).unwrap().is_empty(),
+            "范围外的词不该出现在魔王榜"
+        );
+    }
+
+    #[test]
+    fn 非法_limit_被拒绝而非静默截断() {
+        let conn = db();
+        assert!(boss_words(&conn, 0).is_err());
+        assert!(boss_words(&conn, 51).is_err());
     }
 
     #[test]

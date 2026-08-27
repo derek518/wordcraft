@@ -21,6 +21,14 @@ pub struct Word {
     pub phonetic: String,
     pub pos: String,
     pub meaning: String,
+    /// 第二词性。多数词没有同样常用的第二用法，`None` 就是「没有」。
+    ///
+    /// 出题只用主词性——选项长度一致才不会把正确答案暴露成「唯一那个长的」。
+    /// 这一栏在揭晓时补充展示（契约 §8）。
+    #[serde(default)]
+    pub pos_2: Option<String>,
+    #[serde(default)]
+    pub meaning_2: Option<String>,
     pub example_1: String,
     pub example_2: String,
     pub level: String,
@@ -36,6 +44,14 @@ pub struct WordImport {
     pub phonetic: String,
     pub pos: String,
     pub meaning: String,
+    /// 第二词性。多数词没有同样常用的第二用法，`None` 就是「没有」。
+    ///
+    /// 出题只用主词性——选项长度一致才不会把正确答案暴露成「唯一那个长的」。
+    /// 这一栏在揭晓时补充展示（契约 §8）。
+    #[serde(default)]
+    pub pos_2: Option<String>,
+    #[serde(default)]
+    pub meaning_2: Option<String>,
     pub example_1: String,
     #[serde(default)]
     pub example_2: String,
@@ -72,6 +88,8 @@ fn row_to_word(row: &Row) -> rusqlite::Result<Word> {
         phonetic: row.get("phonetic")?,
         pos: row.get("pos")?,
         meaning: row.get("meaning")?,
+        pos_2: row.get("pos_2")?,
+        meaning_2: row.get("meaning_2")?,
         example_1: row.get("example_1")?,
         example_2: row.get("example_2")?,
         level: row.get("level")?,
@@ -80,8 +98,8 @@ fn row_to_word(row: &Row) -> rusqlite::Result<Word> {
     })
 }
 
-const SELECT_COLS: &str = "id, word, phonetic, pos, meaning, example_1, example_2, \
-                           level, frequency_band, zone";
+const SELECT_COLS: &str = "id, word, phonetic, pos, meaning, pos_2, meaning_2, \
+                           example_1, example_2, level, frequency_band, zone";
 
 pub fn find_by_id(conn: &Connection, id: i64) -> Result<Option<Word>, String> {
     conn.query_row(
@@ -473,8 +491,9 @@ pub fn import(conn: &mut Connection, items: &[WordImport]) -> Result<ImportOutco
         tx.execute(
             "INSERT INTO words
                (word, phonetic, pos, meaning, example_1, example_2,
-                level, frequency_band, frequency_rank, zone, source_edition, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                level, frequency_band, frequency_rank, zone, source_edition, created_at,
+                pos_2, meaning_2)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
              ON CONFLICT(word) DO UPDATE SET
                phonetic = excluded.phonetic,
                pos = excluded.pos,
@@ -485,7 +504,9 @@ pub fn import(conn: &mut Connection, items: &[WordImport]) -> Result<ImportOutco
                frequency_band = excluded.frequency_band,
                frequency_rank = excluded.frequency_rank,
                zone = excluded.zone,
-               source_edition = excluded.source_edition",
+               source_edition = excluded.source_edition,
+               pos_2 = excluded.pos_2,
+               meaning_2 = excluded.meaning_2",
             rusqlite::params![
                 item.word,
                 item.phonetic,
@@ -499,6 +520,8 @@ pub fn import(conn: &mut Connection, items: &[WordImport]) -> Result<ImportOutco
                 item.zone,
                 item.source_edition,
                 now,
+                item.pos_2,
+                item.meaning_2,
             ],
         )
         .map_err(|e| format!("写入词条 `{}` 失败: {e}", item.word))?;
@@ -532,6 +555,8 @@ mod tests {
             phonetic: "/ˈkrɪstl/".into(),
             pos: "n.".into(),
             meaning: "水晶".into(),
+            pos_2: None,
+            meaning_2: None,
             example_1: format!("A glowing {word} lights the cave."),
             example_2: String::new(),
             level: "junior".into(),
@@ -935,6 +960,8 @@ mod tests {
             phonetic: "/'prәugræm/".into(),
             pos: "n.".into(),
             meaning: "节目，节目单，程序".into(),
+            pos_2: None,
+            meaning_2: None,
             example_1: "Our sandbox program lets you build with colored blocks.".into(),
             example_2: "The racing program on TV starts at eight tonight.".into(),
             level: "cet4".into(),
@@ -945,5 +972,48 @@ mod tests {
         };
         let out = import(&mut conn, &[item]).unwrap();
         assert!(out.rejected.is_empty(), "真实四级词条被拒: {:?}", out.rejected);
+    }
+
+    #[test]
+    fn 第二词性能往返() {
+        let mut conn = db();
+        let mut w = sample("train");
+        w.pos = "n.".into();
+        w.meaning = "火车，列车".into();
+        w.pos_2 = Some("vt.".into());
+        w.meaning_2 = Some("训练，教育".into());
+        import(&mut conn, &[w]).unwrap();
+
+        let got = search(&conn, "train", 1).unwrap().pop().unwrap();
+        assert_eq!(got.pos_2.as_deref(), Some("vt."));
+        assert_eq!(got.meaning_2.as_deref(), Some("训练，教育"));
+    }
+
+    #[test]
+    fn 没有第二词性时读回来是空() {
+        let mut conn = db();
+        import(&mut conn, &[sample("listen")]).unwrap();
+        let got = search(&conn, "listen", 1).unwrap().pop().unwrap();
+        // null 就是「没有」。用空串伪装成有，界面会渲染一行空的「另见：」
+        assert_eq!(got.pos_2, None);
+        assert_eq!(got.meaning_2, None);
+    }
+
+    #[test]
+    fn 重新导入能清掉不再适用的第二词性() {
+        let mut conn = db();
+        let mut w = sample("plant");
+        w.pos_2 = Some("vt.".into());
+        w.meaning_2 = Some("种植".into());
+        import(&mut conn, &[w.clone()]).unwrap();
+
+        w.pos_2 = None;
+        w.meaning_2 = None;
+        import(&mut conn, &[w]).unwrap();
+
+        // upsert 漏掉这两列的话，词库改了主意也清不掉旧值——
+        // 界面会一直显示一个已经被判定为不常用的义项
+        let got = search(&conn, "plant", 1).unwrap().pop().unwrap();
+        assert_eq!(got.pos_2, None);
     }
 }

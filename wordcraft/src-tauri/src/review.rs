@@ -275,6 +275,8 @@ mod tests {
                 phonetic: "/ˈkrɪstl/".into(),
                 pos: "n.".into(),
                 meaning: "水晶".into(),
+                pos_2: None,
+                meaning_2: None,
                 example_1: "A glowing crystal lights the cave.".into(),
                 example_2: String::new(),
                 level: "junior".into(),

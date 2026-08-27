@@ -169,6 +169,8 @@ mod tests {
                 // 单词必须是纯小写字母：validate 会拒绝含数字的词
                 let w = format!("word{}", (b'a' + i as u8) as char);
                 WordImport {
+                    pos_2: None,
+                    meaning_2: None,
                     example_1: format!("A {w} appears here."),
                     word: w,
                     phonetic: "/w/".into(),

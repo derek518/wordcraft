@@ -50,6 +50,13 @@ SPOT_CHECKS = {
     "but": "conj.", "leave": "vt.",
 }
 
+# 必须带第二词性的词。
+#
+# 这些词的两个用法在高考里都高频，只教一个等于把考点删掉一半：
+# watch 是「看」也是「手表」，train 是「火车」也是「训练」，
+# right 是「正确的」也是「权利」。重新生成时若丢了第二词性，这里当场报错。
+SECOND_POS_REQUIRED = ["watch", "train", "right", "light", "park", "plant", "firm", "share"]
+
 WORD_RE = re.compile(r"^[a-z][a-z\-' ]*$")
 LATIN = re.compile(r"[A-Za-z]")
 
@@ -89,6 +96,19 @@ def contains_word(sentence: str, word: str) -> bool:
     return re.search(rf"\b{stem}\w*", sentence, re.IGNORECASE) is not None
 
 
+def unify_separators(text: str | None) -> str | None:
+    """义项分隔符统一成全角「，」。
+
+    模型有时照抄 ECDICT 的半角 `, `，有时自己规范成全角——实测 1,829 词半角、
+    2,438 词全角。四选一的四个选项并排显示时，混用一眼就能看出来。
+
+    在校验**之后**做：校验要求义项原样抄自源文，先规范化会让子串匹配失效。
+    """
+    if not text:
+        return text
+    return re.sub(r"\s*,\s*", "，", text).strip()
+
+
 def frequency_rank(w: dict) -> int | None:
     """全局词频排名，取 BNC 与当代语料库中较高频的那个。
 
@@ -126,6 +146,15 @@ def validate(item: dict) -> str | None:
         return f"例句含受版权保护的专有名词 `{banned}`"
     if item["frequency_band"] not in (1, 2, 3, 4, 5):
         return f"frequency_band `{item['frequency_band']}` 越界"
+    p2, m2 = item.get("pos_2"), item.get("meaning_2")
+    if (p2 is None) != (m2 is None):
+        return "pos_2 与 meaning_2 必须同时有或同时无"
+    if p2 is not None:
+        if p2 == item["pos"]:
+            return f"pos_2 `{p2}` 与主词性相同"
+        if not m2 or len(m2) > 20:
+            return f"meaning_2 长度非法（{len(m2 or '')} 字）"
+
     rank = item["frequency_rank"]
     if rank is not None and (not isinstance(rank, int) or rank < 1):
         return f"frequency_rank `{rank}` 非法（应为正整数或 null）"
@@ -160,6 +189,10 @@ def main() -> int:
             "phonetic": w["phonetic"],
             "pos": picked["pos"] if picked else w["pos"],
             "meaning": picked["meaning"] if picked else w["meaning"],
+            # 第二词性：只有模型判定「高考阅读里大概率会遇到」的才有。
+            # null 就是没有，不用空串伪装成有
+            "pos_2": (picked or {}).get("pos2"),
+            "meaning_2": (picked or {}).get("meaning2"),
             "example_1": ex.get("example_1", ""),
             "example_2": ex.get("example_2", ""),
             "level": w["level"],
@@ -169,6 +202,9 @@ def main() -> int:
             "source_edition": w["source_edition"],
         }
         reason = validate(item)
+        # 规范化排在校验之后：校验比对的是源文，先改分隔符会让子串匹配失效
+        item["meaning"] = unify_separators(item["meaning"])
+        item["meaning_2"] = unify_separators(item["meaning_2"])
         if reason:
             rejected[reason] += 1
             samples.setdefault(reason, item["word"])
@@ -182,11 +218,18 @@ def main() -> int:
         for w, want in SPOT_CHECKS.items()
         if w in by_word and by_word[w]["pos"] != want
     ]
-    if bad:
-        print("词性哨兵未通过——这些高频词又挑回了生僻义：", file=sys.stderr)
-        for b in bad:
-            print(f"  {b}", file=sys.stderr)
-        print("\n重跑 gen_meanings.py --words " + " ".join(SPOT_CHECKS), file=sys.stderr)
+    missing_2 = [w for w in SECOND_POS_REQUIRED if w in by_word and not by_word[w].get("pos_2")]
+    if bad or missing_2:
+        if bad:
+            print("词性哨兵未通过——这些高频词又挑回了生僻义：", file=sys.stderr)
+            for b in bad:
+                print(f"  {b}", file=sys.stderr)
+        if missing_2:
+            print("这些词的第二词性丢了——两个用法在高考里都高频：", file=sys.stderr)
+            for w in missing_2:
+                print(f"  {w}: 只有 {by_word[w]['pos']} {by_word[w]['meaning']}", file=sys.stderr)
+        need = sorted(set(w for w in bad for w in [w.split(":")[0]]) | set(missing_2))
+        print("\n重跑 gen_meanings.py --words " + " ".join(need or SPOT_CHECKS), file=sys.stderr)
         return 1
 
     OUTPUT.write_text(
@@ -196,7 +239,8 @@ def main() -> int:
 
     print(f"词库 {len(library):,} 词 → {OUTPUT}  ({OUTPUT.stat().st_size/1024:.0f}KB)")
     stale = len(library) - refined
-    print(f"释义：已重挑 {refined:,}，沿用原值 {stale:,}")
+    with_2 = sum(1 for x in library if x.get("pos_2"))
+    print(f"释义：已重挑 {refined:,}，沿用原值 {stale:,}，带第二词性 {with_2:,}")
     if stale:
         print("  （沿用的是 extract.py 按行序挑的，可能不是最常用义——重跑 gen_meanings.py 补齐）")
     print()

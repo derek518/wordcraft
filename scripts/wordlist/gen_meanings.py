@@ -76,10 +76,17 @@ PROMPT = """你在为中国高中生的单词记忆软件整理释义。
    - 按常用度排序，最常用的放第一个
    - 可以跨行取：比如 still 选 adv. 时取「仍然」，不必受行内顺序限制
    - 丢掉专业术语义（[计]、[医]、[化] 等）和生僻义
-3. 释义要短。四选一的选项框放不下长句
+3. `pos2` / `meaning2`：**只在第二个词性对高中生同样常用时**才给，
+   否则两个字段都留空字符串。判据是「高考阅读里大概率会遇到这个用法」。
+   宁可留空，不要凑数。
+   - 例：plant 主 n. 植物 次 vt. 种植 —— 都常用，给
+   - 例：listen 主 vi. 听，词典里的 n. 极少见 —— 留空
+   - meaning2 同样**必须原样抄自我给的释义行**，1-2 个义项即可
+   - pos2 不能和 pos 相同
+4. 释义要短。四选一的选项框放不下长句
 
 只返回 JSON，不要任何解释：
-{"单词": {"pos": "词性", "meaning": "义项1，义项2"}, ...}"""
+{"单词": {"pos": "", "meaning": "", "pos2": "", "meaning2": ""}, ...}"""
 
 
 def api_key() -> str:
@@ -137,6 +144,27 @@ def validate(word: str, item: dict, candidates: list[str]) -> str | None:
 
     if len(meaning) > 24:
         return f"释义过长（{len(meaning)} 字），四选一选项框放不下"
+
+    # 第二词性是可选的。给了就按同样的标准查——次要义项同样会被孩子背下来
+    pos2 = normalize_pos(str(item.get("pos2", "")))
+    meaning2 = str(item.get("meaning2", "")).strip()
+    if not pos2 and not meaning2:
+        return None
+    if bool(pos2) != bool(meaning2):
+        return f"第二词性只给了一半（pos2=`{pos2}` meaning2=`{meaning2}`）"
+    if pos2 not in VALID_POS:
+        return f"第二词性 `{pos2}` 不在受控词表"
+    if pos2 == pos:
+        return f"第二词性与主词性相同（{pos}）"
+
+    parts2 = [p for p in re.split(r"[,，;；]", meaning2) if p.strip()]
+    if not (1 <= len(parts2) <= 3):
+        return f"第二词性义项数 {len(parts2)} 越界（应为 1-3）"
+    for p in parts2:
+        if normalize(p) not in pool:
+            return f"第二义项 `{p}` 不在候选释义中（疑似编造）"
+    if len(meaning2) > 20:
+        return f"第二释义过长（{len(meaning2)} 字）"
     return None
 
 
@@ -219,10 +247,14 @@ def main() -> int:
                     stats["rejected"] += 1
                     rejections.append(f"{word}: {reason}")
                 continue
-            accepted[word] = {
+            entry = {
                 "pos": normalize_pos(str(item["pos"])),
                 "meaning": str(item["meaning"]).strip(),
             }
+            if str(item.get("pos2", "")).strip():
+                entry["pos2"] = normalize_pos(str(item["pos2"]))
+                entry["meaning2"] = str(item["meaning2"]).strip()
+            accepted[word] = entry
 
         # 每批立即落盘：中途限流不落盘就得整批重来，token 白花
         with lock:

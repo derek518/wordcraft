@@ -181,6 +181,8 @@ mod tests {
                     phonetic: "/w/".into(),
                     pos: "n.".into(),
                     meaning: format!("释义{i}"),
+                    pos_2: None,
+                    meaning_2: None,
                     example_1: format!("A {w} appears."),
                     example_2: String::new(),
                     // senior：与默认学习范围一致。用 junior 的话，下面测的
@@ -330,6 +332,8 @@ mod integration_tests {
                 phonetic: "/ˈstʌbərn/".into(),
                 pos: "adj.".into(),
                 meaning: "顽固的".into(),
+                pos_2: None,
+                meaning_2: None,
                 example_1: "A stubborn word refuses to stay.".into(),
                 example_2: String::new(),
                 level: "senior".into(),

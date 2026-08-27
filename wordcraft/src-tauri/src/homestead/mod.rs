@@ -296,6 +296,8 @@ mod tests {
                     phonetic: "/w/".into(),
                     pos: "n.".into(),
                     meaning: format!("释义{i}"),
+                    pos_2: None,
+                    meaning_2: None,
                     example_1: format!("A {w} appears."),
                     example_2: String::new(),
                     level: "junior".into(),

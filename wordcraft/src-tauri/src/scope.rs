@@ -290,6 +290,8 @@ mod tests {
             phonetic: "/w/".into(),
             pos: pos.into(),
             meaning: "释义".into(),
+            pos_2: None,
+            meaning_2: None,
             example_1: format!("A sentence with {w} inside."),
             example_2: String::new(),
             level: level.into(),

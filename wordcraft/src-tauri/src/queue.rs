@@ -401,6 +401,8 @@ mod tests {
                     (b'a' + (i % 26) as u8) as char,
                 );
                 words::WordImport {
+                    pos_2: None,
+                    meaning_2: None,
                     example_1: format!("A {w} appears."),
                     word: w,
                     phonetic: "/w/".into(),
@@ -651,6 +653,8 @@ mod tests {
                 phonetic: "/ðə/".into(),
                 pos: "art.".into(),
                 meaning: "那".into(),
+                pos_2: None,
+                meaning_2: None,
                 example_1: "Pass me the book.".into(),
                 example_2: String::new(),
                 level: "junior".into(),
@@ -683,6 +687,8 @@ mod tests {
                 phonetic: "/juː/".into(),
                 pos: "pron.".into(),
                 meaning: "你".into(),
+                pos_2: None,
+                meaning_2: None,
                 example_1: "How are you today?".into(),
                 example_2: String::new(),
                 level: "junior".into(),

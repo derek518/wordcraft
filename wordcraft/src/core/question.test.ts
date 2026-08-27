@@ -17,6 +17,8 @@ function item(overrides: Partial<QueueItem> = {}): QueueItem {
     phonetic: '/əˈplaɪ/',
     pos: 'v.',
     meaning: '申请，应用',
+    pos_2: null,
+    meaning_2: null,
     example_1: 'She applied for the guild membership last week.',
     example_2: 'Apply the paint evenly across the shield.',
     difficulty: 5,

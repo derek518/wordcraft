@@ -151,6 +151,8 @@ mod tests {
             .map(|i| {
                 let w = format!("rw{}", (b'a' + i as u8) as char);
                 words::WordImport {
+                    pos_2: None,
+                    meaning_2: None,
                     example_1: format!("A {w} appears."),
                     word: w,
                     phonetic: "/w/".into(),

@@ -624,6 +624,15 @@ export default function WordTrainer({ sessionType, drillMode = null, onFinish }:
                 <span className="font-bold">{current.meaning}</span>
                 <span className="text-wc-text-muted ml-2">({current.pos})</span>
               </div>
+              {current.pos_2 && current.meaning_2 && (
+                // 考一个义项，教两个。出题只用主词性——只有部分词有第二词性，
+                // 混进选项会让正确答案变成唯一那个「长的」，不认识也能选对
+                <div className="text-sm mt-1">
+                  <span className="text-wc-text-muted">另见：</span>
+                  <span className="text-wc-accent">{current.meaning_2}</span>
+                  <span className="text-wc-text-muted ml-2">({current.pos_2})</span>
+                </div>
+              )}
             </div>
 
             <div className="text-sm text-wc-text-muted bg-wc-bg/50 rounded-xl p-3 border border-wc-border/30">

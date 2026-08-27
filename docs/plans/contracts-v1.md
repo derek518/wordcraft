@@ -568,6 +568,8 @@ interface WordImportDto {
   phonetic: string        // IPA，含 / /
   pos: string             // 受控词表
   meaning: string         // 中文释义，多义用「，」分隔
+  pos_2?: string | null   // 第二词性，可空（迁移 016）
+  meaning_2?: string | null
   example_1: string       // 必填，游戏/动漫/绘画语境
   example_2: string       // 可空
   level: 'junior' | 'senior' | 'cet4' | 'art'
@@ -583,6 +585,24 @@ interface WordImportDto {
 - `meaning` 非空且不含英文字母（防止字段错位）
 - `example_1` 非空且包含 `word` 的某个词形
 - `frequency_band` ∈ 1..5，`zone` ∈ 受控词表
+- `pos_2` / `meaning_2` 同时有或同时无；`pos_2 ≠ pos`；`meaning_2` ≤ 20 字
+
+**第二词性（迁移 016）**
+
+47% 的词有两种以上词性，教学区间（rank 600–5000）里有 1,599 个实词如此。
+单列一个 `pos` 意味着 `watch` 只教「看」不教「手表」、`train` 只教「火车」
+不教「训练」、`right` 只教「正确的」不教「权利」——都是高考高频考点。
+
+**为什么另存两列，而不是拼进 `meaning`**：拼在一起会毁掉四选一。只有部分词
+有第二词性，正确答案就成了唯一那个「长选项」，不认识单词也能选对；干扰项按
+同词性挑，补不齐这个结构。
+
+所以 **出题只用主词性**（选项长度一致），第二词性在答完揭晓时补充展示——
+考一个义项，教两个。`null` 就是「没有」，不用空串伪装。
+
+`build_library.py` 的 `SECOND_POS_REQUIRED` 哨兵锁住
+watch / train / right / light / park / plant / firm / share：重新生成时若丢了
+第二词性，构建当场失败。
 
 **释义从哪来**（2026-08-27 修订）
 

@@ -27,6 +27,9 @@ export interface QueueItem {
   phonetic: string
   pos: string
   meaning: string
+  /** 第二词性。多数词没有同样常用的第二用法，null 就是没有 */
+  pos_2: string | null
+  meaning_2: string | null
   example_1: string
   example_2: string
   /** Lv.5 拼写题准入判据（决议 S10：仅 1–2 段核心词开放） */

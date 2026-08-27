@@ -26,6 +26,8 @@ function word(over: Partial<QueueItem> = {}): QueueItem {
     phonetic: '/əˈplaɪ/',
     pos: 'v.',
     meaning: '申请，应用',
+    pos_2: null,
+    meaning_2: null,
     example_1: 'She applied for the guild membership.',
     example_2: '',
     difficulty: 5,
@@ -286,5 +288,50 @@ describe('训练主循环', () => {
     })
     await settle()
     expect(document.body.textContent).toContain('Lv.3')
+  })
+
+  describe('第二词性', () => {
+    it('答完在卡片上补充展示，但不进选项', async () => {
+      const w = word({
+        word: 'train', pos: 'n.', meaning: '火车，列车',
+        pos_2: 'vt.', meaning_2: '训练，教育',
+      })
+      stub([w])
+      render(<WordTrainer sessionType="morning" onFinish={() => {}} />)
+      await settle()
+
+      // 出题时只有主释义。第二词性混进选项会让正确答案变成唯一那个「长的」，
+      // 因为只有部分词有第二词性，干扰项补不齐这个结构——不认识单词也能选对
+      const options = [...document.querySelectorAll('button')].map((b) => b.textContent ?? '')
+      expect(options.some((o) => o.includes('训练'))).toBe(false)
+
+      await act(async () => {
+        ;[...document.querySelectorAll('button')]
+          .find((b) => b.textContent?.includes('火车'))!
+          .click()
+      })
+      await settle()
+
+      // 答完之后才教第二个用法：考一个义项，教两个
+      expect(document.body.textContent).toContain('另见')
+      expect(document.body.textContent).toContain('训练，教育')
+      expect(document.body.textContent).toContain('vt.')
+    })
+
+    it('没有第二词性的词不显示「另见」空行', async () => {
+      stub([word({ pos_2: null, meaning_2: null })])
+      render(<WordTrainer sessionType="morning" onFinish={() => {}} />)
+      await settle()
+
+      await act(async () => {
+        ;[...document.querySelectorAll('button')]
+          .find((b) => b.textContent?.includes('申请'))!
+          .click()
+      })
+      await settle()
+
+      // 多数词没有第二词性。留一行空的「另见：」比不显示更糟
+      expect(document.body.textContent).not.toContain('另见')
+    })
   })
 })

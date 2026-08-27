@@ -252,6 +252,8 @@ mod tests {
                 phonetic: "/w/".into(),
                 pos: "n.".into(),
                 meaning: format!("释义{i}"),
+                pos_2: None,
+                meaning_2: None,
                 example_1: format!("A word{} appears.", (b'a' + i as u8) as char),
                 example_2: String::new(),
                 // senior：与默认学习范围一致。用 junior 的话统计全被范围

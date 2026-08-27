@@ -9,6 +9,8 @@ function newWord(overrides: Partial<QueueItem> = {}): QueueItem {
     phonetic: '/ˈkrɪstl/',
     pos: 'n.',
     meaning: '水晶',
+    pos_2: null,
+    meaning_2: null,
     example_1: 'A glowing crystal.',
     example_2: '',
     frequency_band: 1,

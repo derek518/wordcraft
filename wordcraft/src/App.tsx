@@ -81,7 +81,12 @@ function MainApp() {
         )
       }
 
-      await api.setSetting('library_fingerprint', fingerprint)
+      // 有词被拒时不记指纹：那次导入并没有真的完成，记下就等于把失败
+      // 标记成已完成，下次启动直接跳过——四级词第一次导入正是这样
+      // 被静默挡在门外的（Rust 侧的受控 level 词表漏了 cet4）
+      if (outcome.rejected.length === 0) {
+        await api.setSetting('library_fingerprint', fingerprint)
+      }
       if (done !== 'true') {
         await api.setSetting('onboarding_done', 'true')
         setShowWelcome(true)

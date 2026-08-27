@@ -4,7 +4,12 @@ use crate::db::clock;
 use rusqlite::{Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 
-const VALID_LEVELS: [&str; 3] = ["junior", "senior", "art"];
+/// 受控 level 词表，contracts §8。
+///
+/// `cet4` 为考纲外扩展：单列一档而非并进 senior，用户可自行选择是否学。
+/// 这张表在三处出现过——抽词脚本、build_library、这里——四级词导入时
+/// 三处都要放行，漏一处就是「词进不来且没有报错」
+const VALID_LEVELS: [&str; 4] = ["junior", "senior", "cet4", "art"];
 const VALID_ZONES: [&str; 7] = [
     "newbie", "grass", "water", "fire", "thunder", "ice", "rock",
 ];
@@ -604,6 +609,11 @@ mod tests {
         w = sample("crystal");
         w.level = "college".into();
         assert!(validate(&w).is_err(), "非法 level 未被拒绝");
+
+        // 四级词必须放行，否则扩充词库时它们会被静默挡在门外
+        w = sample("crystal");
+        w.level = "cet4".into();
+        assert!(validate(&w).is_ok(), "cet4 应通过校验");
     }
 
     #[test]
@@ -906,5 +916,24 @@ mod tests {
         // 静默返回空会让题目只剩一个选项，且没有任何线索指向根因
         let err = distractor_pool(&conn, 999, 1, 3).unwrap_err();
         assert!(err.contains("999"), "错误消息应指明是哪个词条: {err}");
+    }
+    #[test]
+    fn 真实四级词条能通过导入() {
+        let mut conn = crate::test_support::in_memory_db();
+        crate::db::migrations::run(&mut conn).unwrap();
+        let item = WordImport {
+            word: "program".into(),
+            phonetic: "/'prәugræm/".into(),
+            pos: "n.".into(),
+            meaning: "节目，节目单，程序".into(),
+            example_1: "Our sandbox program lets you build with colored blocks.".into(),
+            example_2: "The racing program on TV starts at eight tonight.".into(),
+            level: "cet4".into(),
+            frequency_band: 1,
+            zone: "water".into(),
+            source_edition: "gk".into(),
+        };
+        let out = import(&mut conn, &[item]).unwrap();
+        assert!(out.rejected.is_empty(), "真实四级词条被拒: {:?}", out.rejected);
     }
 }

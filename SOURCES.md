@@ -98,6 +98,19 @@ python3 scripts/cards/conform.py <暂存目录> -o wordcraft/public/assets/cards
 | 许可证 | CC0（原创像素图） |
 | 说明 | 见 `public/assets/README.md` |
 
+## 词库 · 四级扩展（2026-08-27）
+
+| 项 | 内容 |
+|---|---|
+| 新增 | 1621 个四级词（ECDICT 的 `cet4` 标签），词库 3657 → 5278 |
+| 分级 | 按 `zk → gk → cet4` 优先级。一个词既是高考词又是四级词时，它首先是高考词 |
+| 例句 | deepseek-v4-flash 生成，经 contracts §8 校验 |
+| 发音 | edge-tts 补齐 1621 个，全库 5278 个 |
+| 复现 | `docs/vocabulary-expansion.md` |
+
+四级词单列 `level='cet4'` 而非并进 senior，是为了把选择权留给用户：
+高考前混进来会稀释重点，考完正好接着用。
+
 ## 词库
 
 | 项 | 内容 |

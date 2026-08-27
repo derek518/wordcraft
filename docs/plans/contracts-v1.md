@@ -37,7 +37,7 @@ CREATE TABLE words (
   meaning         TEXT NOT NULL,
   example_1       TEXT NOT NULL,
   example_2       TEXT NOT NULL DEFAULT '',
-  level           TEXT NOT NULL,                    -- 'junior' | 'senior' | 'art'
+  level           TEXT NOT NULL,                    -- 'junior' | 'senior' | 'cet4' | 'art'
   frequency_band  INTEGER NOT NULL,                 -- 1..5, 1 = 最高频
   zone            TEXT NOT NULL,                    -- 'newbie'|'grass'|'water'|'fire'|'thunder'|'ice'|'rock'
   created_at      TEXT NOT NULL
@@ -467,7 +467,7 @@ interface WordImportDto {
   meaning: string         // 中文释义，多义用「，」分隔
   example_1: string       // 必填，游戏/动漫/绘画语境
   example_2: string       // 可空
-  level: 'junior' | 'senior' | 'art'
+  level: 'junior' | 'senior' | 'cet4' | 'art'
   frequency_band: 1 | 2 | 3 | 4 | 5
   zone: 'newbie' | 'grass' | 'water' | 'fire' | 'thunder' | 'ice' | 'rock'
 }
@@ -579,6 +579,9 @@ ECDICT zk（中考考纲）      1,603
 ### 9.2 四阶段流程
 
 **① 粗筛（无用户感知）**
+- `level='cet4'` 为考纲外扩展（2026-08-27 加）。它单列一档而不并进 `senior`，
+  是为了把选择权留给用户：高考前混进来会稀释重点，考完正好接着用。
+  一个词既是高考词又是四级词时按 `zk → gk → cet4` 定级，它首先是高考词
 - `level='senior'` 的词**不进摸底**，默认全部 `new`（新高一大概率未系统学过）
 - `level='art'` 的 300 词默认锁定，不占前期额度，随 zone `rock` 解锁
 - 摸底范围仅 `level='junior'` 的约 1600 词 → 测试范围缩小 70%，同样 5 分钟得到细得多的粒度

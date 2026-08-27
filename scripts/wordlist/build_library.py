@@ -27,7 +27,8 @@ VALID_POS = {
     "n.", "v.", "vt.", "vi.", "adj.", "adv.", "prep.", "conj.",
     "pron.", "art.", "num.", "int.", "aux.", "modal",
 }
-VALID_LEVELS = {"junior", "senior", "art"}
+# cet4 为考纲外扩展，见 contracts §8
+VALID_LEVELS = {"junior", "senior", "cet4", "art"}
 VALID_ZONES = {"newbie", "grass", "water", "fire", "thunder", "ice", "rock"}
 
 WORD_RE = re.compile(r"^[a-z][a-z\-' ]*$")

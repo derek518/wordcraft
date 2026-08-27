@@ -130,7 +130,7 @@ describe('冒险地图', () => {
     await settle()
 
     expect(document.body.textContent).toContain('磐石秘境')
-    expect(document.body.textContent).toContain('高考难点词')
+    expect(document.body.textContent).toContain('低频难词')
     expect(document.body.textContent).not.toContain('冒险的起点')
   })
 })

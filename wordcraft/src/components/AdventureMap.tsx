@@ -53,14 +53,21 @@ const PORTALS: { key: SessionType; name: string; time: string; image: string; co
   },
 ]
 
+/**
+ * 分区按词频难度排列，说明也按难度写。
+ *
+ * 先前写的是学段（「初中核心词」这类），而分区过滤学习范围之后，
+ * 高中范围下的蓝水湖泊只剩 152 个高中词，标签却还写着「初中核心词」——
+ * 自相矛盾。难度是分区的固有属性，不随范围变化。
+ */
 const ZONE_META: Record<string, { icon: string; element: string; desc: string }> = {
   newbie: { icon: '🏠', element: 'neutral', desc: '冒险的起点' },
-  grass: { icon: '🌿', element: 'grass', desc: '初中基础词' },
-  water: { icon: '💧', element: 'water', desc: '初中核心词' },
-  fire: { icon: '🔥', element: 'fire', desc: '高中核心词' },
-  thunder: { icon: '⚡', element: 'thunder', desc: '高中拓展词' },
-  ice: { icon: '❄️', element: 'ice', desc: '高考高频词' },
-  rock: { icon: '🪨', element: 'rock', desc: '高考难点词' },
+  grass: { icon: '🌿', element: 'grass', desc: '最常用词' },
+  water: { icon: '💧', element: 'water', desc: '常用词' },
+  fire: { icon: '🔥', element: 'fire', desc: '进阶词' },
+  thunder: { icon: '⚡', element: 'thunder', desc: '高频难词' },
+  ice: { icon: '❄️', element: 'ice', desc: '低频难词' },
+  rock: { icon: '🪨', element: 'rock', desc: '低频难词' },
 }
 
 const ELEMENT_COLORS: Record<string, { bg: string; glow: string; text: string }> = {

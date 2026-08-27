@@ -23,6 +23,9 @@ const WRITABLE: &[(&str, ValueKind)] = &[
     // 所以不能写成固定的 OneOf——交给 StudyLevel::parse 判
     ("study_level", ValueKind::StudyLevel),
     ("study_days", ValueKind::StudyDays),
+    // 词库内容指纹。变了就重新导入——词库扩充后老用户拿不到新词，
+    // 而界面上看不出任何异常
+    ("library_fingerprint", ValueKind::AnyText),
 ];
 
 #[derive(Clone, Copy)]
@@ -178,6 +181,7 @@ mod tests {
             ("tts_provider", "off"),
             ("study_level", "senior"),
             ("study_days", "6,7"),
+            ("library_fingerprint", "5278-1a2b3c4d"),
         ] {
             assert!(
                 validate(key, sample).is_ok(),

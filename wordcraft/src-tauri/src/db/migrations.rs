@@ -67,6 +67,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "card_pool_v2",
         sql: include_str!("migrations/010_card_pool_v2.sql"),
     },
+    Migration {
+        version: 11,
+        name: "level_cet4",
+        sql: include_str!("migrations/011_level_cet4.sql"),
+    },
 ];
 
 /// 执行所有未应用的迁移，返回本次实际应用的版本号。
@@ -125,7 +130,31 @@ fn applied_versions(conn: &Connection) -> Result<Vec<i64>, String> {
         .map_err(|e| format!("解析已应用迁移失败: {e}"))
 }
 
+/// 应用一条迁移。
+///
+/// **外键在事务外关闭。** SQLite 重建一张被引用的表（改 CHECK 只能重建）
+/// 必须这么做，官方文档的 "Making Other Kinds Of Table Schema Changes"
+/// 就是这个流程：`foreign_keys=OFF` → 事务 → 建新表/拷贝/删旧表/改名 → 提交 → `ON`。
+///
+/// 两个原因非关不可：
+/// - 开着外键时 `DROP TABLE words` 会撞约束，事务直接失败
+/// - 更危险的是 `word_states` 声明了 `ON DELETE CASCADE`——DROP 会隐式
+///   DELETE 并触发级联，**把用户的全部学习状态一起删掉**，而且不报错
+///
+/// 关外键不等于放弃校验：提交前跑一次 `foreign_key_check`，留下悬空引用
+/// 就整笔回滚。比原先「开着外键因而根本无法重建表」严格。
 fn apply(conn: &mut Connection, migration: &Migration) -> Result<(), String> {
+    conn.execute_batch("PRAGMA foreign_keys = OFF")
+        .map_err(|e| format!("关闭外键失败: {e}"))?;
+
+    let result = apply_in_tx(conn, migration);
+
+    conn.execute_batch("PRAGMA foreign_keys = ON")
+        .map_err(|e| format!("恢复外键失败: {e}"))?;
+    result
+}
+
+fn apply_in_tx(conn: &mut Connection, migration: &Migration) -> Result<(), String> {
     let tx = conn
         .transaction()
         .map_err(|e| format!("开启迁移 {} 事务失败: {e}", migration.version))?;
@@ -136,6 +165,17 @@ fn apply(conn: &mut Connection, migration: &Migration) -> Result<(), String> {
             migration.version, migration.name
         )
     })?;
+
+    // 关了外键就必须自己验。留下悬空引用比迁移失败更难查
+    let orphans: i64 = tx
+        .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| r.get(0))
+        .map_err(|e| format!("迁移 {} 外键自检失败: {e}", migration.version))?;
+    if orphans > 0 {
+        return Err(format!(
+            "迁移 {} ({}) 留下 {orphans} 条悬空引用，已回滚",
+            migration.version, migration.name
+        ));
+    }
 
     tx.execute(
         "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
@@ -275,12 +315,92 @@ mod tests {
         assert_eq!(actual, expected, "实际表集合与契约不一致");
     }
 
+    /// 带数据的库上重跑全部迁移。
+    ///
+    /// 迁移测试一向跑在空库上，于是「只有存在外键引用时才失败」的迁移
+    /// 能通过每一条测试——011 重建 words 表时正是这样：空库上安然通过，
+    /// 用户库上启动即崩。这条测试先造出引用关系，再跑迁移。
+    #[test]
+    fn 带数据的库能跑完全部迁移() {
+        use crate::db::repo::{word_states, words};
+
+        let mut conn = crate::test_support::in_memory_db();
+        run(&mut conn).unwrap();
+
+        words::import(
+            &mut conn,
+            &[words::WordImport {
+                word: "crystal".into(),
+                phonetic: "/ˈkrɪstl/".into(),
+                pos: "n.".into(),
+                meaning: "水晶".into(),
+                example_1: "A crystal lights the cave.".into(),
+                example_2: String::new(),
+                level: "senior".into(),
+                frequency_band: 1,
+                zone: "newbie".into(),
+                source_edition: String::new(),
+            }],
+        )
+        .unwrap();
+
+        // 制造外键引用：word_states 与 review_logs 都指向 words
+        word_states::upsert(
+            &conn,
+            &word_states::WordState {
+                word_id: 1,
+                difficulty: 5.0,
+                stability: 3.0,
+                due_at: crate::db::clock::now(),
+                fsrs_state: 2,
+                app_state: "review".into(),
+                reps: 3,
+                lapses: 0,
+                question_level: 2,
+                reinforce_streak: 0,
+                last_review_at: None,
+                mastered_at: None,
+            },
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO review_logs (word_id, session_id, question_type, is_correct,
+             reaction_ms, rating, difficulty_before, stability_before,
+             difficulty_after, stability_after, reviewed_at)
+             VALUES (1, NULL, 1, 1, 2000, 3, 5.0, 1.0, 4.8, 3.0, ?1)",
+            [crate::db::clock::now()],
+        )
+        .unwrap();
+
+        // 只回退最后一条迁移的账本，让它在**有数据**的库上重跑一次。
+        // 删整张账本会让迁移 1 在已有表的库上重放，测的就不是这件事了
+        let last = MIGRATIONS.last().unwrap().version;
+        conn.execute("DELETE FROM schema_migrations WHERE version = ?1", [last])
+            .unwrap();
+        run(&mut conn).expect("最后一条迁移在有数据的库上失败");
+
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM words", [], |r| r.get::<_, i64>(0)).unwrap(),
+            1,
+            "重建表不该丢词"
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM word_states", [], |r| r.get::<_, i64>(0)).unwrap(),
+            1,
+            "学习状态必须原样保留"
+        );
+        let orphans: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| r.get(0))
+            .unwrap_or(0);
+        assert_eq!(orphans, 0, "重建后不该留下悬空引用");
+    }
+
     #[test]
     fn 重复执行幂等() {
         let mut conn = in_memory_db();
 
         let first = run(&mut conn).expect("首次迁移失败");
-        assert_eq!(first, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10], "首次应用全部迁移");
+        assert_eq!(first, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], "首次应用全部迁移");
 
         let second = run(&mut conn).expect("重复迁移失败");
         assert!(second.is_empty(), "重复执行不应再应用任何迁移");

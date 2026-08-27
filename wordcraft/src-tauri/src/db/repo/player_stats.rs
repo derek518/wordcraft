@@ -1,5 +1,6 @@
 //! 玩家总状态（单行表）。公式见 contracts-v1.md §7。
 
+use crate::ability::Ability;
 use rusqlite::Connection;
 use serde::Serialize;
 
@@ -272,4 +273,51 @@ mod tests {
         assert!(grant_monthly_if_due(&conn, &month).unwrap());
         assert!(!grant_monthly_if_due(&conn, &month).unwrap());
     }
+}
+
+/// 读取能力估计。从未观测过时返回先验。
+///
+/// 先验只存在于 `ability.rs`，不写进 SQL 的 DEFAULT——SQL 里留一份常量副本，
+/// 改了 Rust 侧就会分叉，而分叉后没有任何东西会报错。
+pub fn ability(conn: &Connection) -> Result<Ability, String> {
+    let (theta, information, observations): (Option<f64>, f64, i64) = conn
+        .query_row(
+            "SELECT ability_theta, ability_information, ability_observations
+             FROM player_stats WHERE id = 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .map_err(|e| format!("读取能力估计失败: {e}"))?;
+
+    Ok(match theta {
+        Some(t) if observations > 0 && information > 0.0 => Ability {
+            theta: t,
+            information,
+            observations,
+        },
+        _ => Ability::default(),
+    })
+}
+
+pub fn set_ability(conn: &Connection, a: &Ability) -> Result<(), String> {
+    conn.execute(
+        "UPDATE player_stats
+            SET ability_theta = ?1, ability_information = ?2, ability_observations = ?3
+          WHERE id = 1",
+        rusqlite::params![a.theta, a.information, a.observations],
+    )
+    .map_err(|e| format!("写入能力估计失败: {e}"))?;
+    Ok(())
+}
+
+/// 按能力估计推算的词汇量：词库里排名在掌握边界之前的词数。
+///
+/// 取代摸底一次性算出的静态值——那个数字从 onboarding 之后就再没变过。
+pub fn vocab_from_ability(conn: &Connection, a: &Ability) -> Result<i64, String> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM words WHERE frequency_rank IS NOT NULL AND frequency_rank <= ?1",
+        [crate::ability::vocabulary_rank(a.theta)],
+        |r| r.get(0),
+    )
+    .map_err(|e| format!("按能力推算词汇量失败: {e}"))
 }

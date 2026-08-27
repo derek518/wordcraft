@@ -103,11 +103,16 @@ CREATE TABLE player_stats (
   current_streak    INTEGER NOT NULL DEFAULT 0,
   best_streak       INTEGER NOT NULL DEFAULT 0,
   last_streak_date  TEXT,
-  vocab_estimate    INTEGER NOT NULL DEFAULT 0,     -- 摸底测试产出
+  vocab_estimate    INTEGER NOT NULL DEFAULT 0,     -- 由 ability_theta 推算（§10），每次首见作答刷新
   makeup_cards      INTEGER NOT NULL DEFAULT 0,     -- 补签卡，每月 1 日自动发 2 张（S4）
   pause_used_month  INTEGER NOT NULL DEFAULT 0,     -- 今日暂停已用次数，每月限 2
   draw_tickets      INTEGER NOT NULL DEFAULT 0,     -- 抽卡券（S9）
-  last_grant_month  TEXT                            -- 上次发放补签卡的月份 'YYYY-MM'，防重复发放
+  last_grant_month  TEXT,                           -- 上次发放补签卡的月份 'YYYY-MM'，防重复发放
+
+  -- 能力估计（迁移 014，见 §10）。三者可空 / 为 0 表示尚无观测，回落到先验
+  ability_theta        REAL,                         -- 能力值，log2(词频排名) 尺度
+  ability_information  REAL NOT NULL DEFAULT 0,      -- 累计 Fisher 信息量，决定单次观测的步长
+  ability_observations INTEGER NOT NULL DEFAULT 0    -- 参与估计的观测数（仅首见作答）
 );
 
 -- 每日状态：streak 判定的事实依据，支持回溯（S1/S6/S8）
@@ -560,6 +565,67 @@ newbie  固定前 50 词
 控制之下。`rock`（美术生专用）暂无数据，保留在受控词表中。
 
 ---
+
+## 10. 能力估计（`src-tauri/src/ability.rs`）
+
+> 取代手选「初中 / 高中 / 四级」。那三个标签和难度基本无关——102 个高中词的
+> 常用度和 `the` 同级，28 个初中词比大多数四级词还生僻；用标签筛选既在练已经
+> 会的词，又在漏掉该练的词。
+
+### 10.1 模型
+
+词汇掌握对词频高度单调（会 `abandon` 的人几乎必然会 `the`），所以「这孩子会不会
+某个没见过的词」可以用一个数回答：他的掌握边界落在词频轴的哪一位。
+
+```text
+难度  d = log2(frequency_rank)
+能力  θ 同尺度 —— θ = 11 意味着「第 2048 名前后的词有一半把握」
+答对  P = c + (1-c)·σ((θ-d)/s)
+真会  P_known = σ((θ-d)/s)          ← 内容筛选用这个
+```
+
+| 常量 | 值 | 说明 |
+|---|---|---|
+| `SLOPE` (s) | 1.1 | **未校准**，先验值。决定前沿宽窄，真值须由实际作答估出 |
+| `GUESS` (c) | 0.25 | 四选一猜对率。不建模会把蒙对当掌握 |
+| `PRIOR_THETA` | log2(2500) | 冷启动先验。低估只是多练已会的词，高估会让孩子一上来就撞墙 |
+| `PRIOR_INFORMATION` | 2.0 | 约 16 次观测。由模拟选定，见代码注释里的对照表 |
+
+**内容筛选用 `P_known` 而非 `P`**：后者对完全不会的词也给 0.25，拿它当门槛会把
+「四分之一能蒙对」误读成「有点印象」。
+
+### 10.2 分层
+
+| 层 | 判据 | 用途 |
+|---|---|---|
+| `Known` | `P_known > 0.85` | 不再排入新词队列 |
+| `Frontier` | `0.30 ≤ P_known ≤ 0.85` | **该练的就是这些** |
+| `TooHard` | `P_known < 0.30` | 暂缓，等边界推过去 |
+
+`frontier_ranks(θ)` 由阈值反解出排名区间，供排队与界面用——两处各写一份数字，
+改了阈值界面就开始说谎。
+
+### 10.3 更新时机
+
+**只在首次遇见、且题型为四选一（`question_type ≤ 4`）时更新。**
+
+- 第五次复习 `abandon` 答对，说明的是「这个应用把它教会了」，不是「本来就会」。
+  拿复习结果更新 θ 会让估计随训练虚高，然后系统开始跳过它其实没教过的词。
+  应用教会的词由 FSRS 逐词跟踪，不走 θ。
+- Lv.5 是全拼写，猜对率为 0。同一个模型套上去会把「拼不出来」当成词汇量不足。
+- `frequency_rank IS NULL` 的 18 个词跳过，不插补。
+
+更新用 Fisher 记分法：`θ' = θ + score / (information + info_obs)`。**分母是后验
+信息量**，用先验会系统性过冲（首步大 24.8%，30 次同向观测后差 40%）。步长因此
+自然衰减，不需要人为系数。
+
+与作答落库同一事务：估计更新了但作答没落库（或反之），会让 θ 与观测数对不上，
+而这种不一致没有任何东西会报错。
+
+### 10.4 进步如何发生
+
+θ 稳定后学习不会停滞：候选只在**没学过**的词里选，边界附近的词学完了，池子自然
+向更难处推进。进步靠词池消耗，不靠 θ 漂移。
 
 ## 9. 摸底分级（spec F5，决议 S2 / S7）
 

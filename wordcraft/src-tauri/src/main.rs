@@ -4,6 +4,7 @@
 
 use tauri::Manager;
 
+mod ability;
 mod audio;
 mod boss;
 mod cards;

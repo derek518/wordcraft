@@ -82,6 +82,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "frequency_rank",
         sql: include_str!("migrations/013_frequency_rank.sql"),
     },
+    Migration {
+        version: 14,
+        name: "ability",
+        sql: include_str!("migrations/014_ability.sql"),
+    },
 ];
 
 /// 执行所有未应用的迁移，返回本次实际应用的版本号。
@@ -251,7 +256,8 @@ mod tests {
                 "id", "total_xp", "level", "current_streak", "best_streak",
                 "last_streak_date", "vocab_estimate", "makeup_cards",
                 "pause_used_month", "draw_tickets", "last_grant_month",
-                "track_points",
+                "track_points", "ability_theta", "ability_information",
+                "ability_observations",
             ],
         ),
         (
@@ -412,7 +418,7 @@ mod tests {
         let first = run(&mut conn).expect("首次迁移失败");
         assert_eq!(
             first,
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
             "首次应用全部迁移"
         );
 

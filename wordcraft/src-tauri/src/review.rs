@@ -7,9 +7,10 @@
 //! 若状态更新成功而日志失败，算法就失去了回溯调参的依据（spec §6）；若日志
 //! 成功而状态失败，词的到期时间不变，会被立刻重新排入队列。
 
+use crate::ability;
 use crate::db::{
     clock,
-    repo::{review_logs, sessions, word_states},
+    repo::{player_stats, review_logs, sessions, word_states},
     Db,
 };
 use rusqlite::Connection;
@@ -138,12 +139,52 @@ fn resolve_mastered_at(
     }
 }
 
+/// 这次作答能否用来更新能力估计。
+///
+/// 两个条件缺一不可：
+///
+/// - **首次遇见**。第五次复习 `abandon` 答对，说明的是「这个应用把它教会了」，
+///   不是「这孩子本来就会」。拿复习结果更新 θ 会让估计随训练虚高，然后系统
+///   开始跳过它其实没教过的词。
+/// - **四选一题型**。能力模型里的猜对率 `GUESS` 是按四选一定的（见
+///   `ability.rs`）。Lv.5 是全拼写，没有选项，猜对率为 0——同一个模型套上去
+///   会把拼写答错当成能力不足的证据，而拼写难度远高于认词。
+fn counts_toward_ability(previous: Option<&word_states::WordState>, dto: &ReviewCommitDto) -> bool {
+    previous.is_none_or(|p| p.reps == 0) && dto.question_type <= 4
+}
+
+/// 用一次首见作答更新能力估计，并同步词汇量。
+///
+/// 没有词频排名的词直接跳过：18 个连字符复合词两个语料库都未收录，
+/// 编一个难度会让模型把凭空捏造的数字当成证据。
+fn update_ability(conn: &Connection, word_id: i64, is_correct: bool) -> Result<(), String> {
+    let rank: Option<i64> = conn
+        .query_row(
+            "SELECT frequency_rank FROM words WHERE id = ?1",
+            [word_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| format!("读取词频排名失败: {e}"))?;
+    let Some(rank) = rank else {
+        return Ok(());
+    };
+
+    let prior = player_stats::ability(conn)?;
+    let next = ability::update(prior, rank, is_correct);
+    player_stats::set_ability(conn, &next)?;
+
+    // 词汇量跟着能力走，而不是停在摸底那一刻算出的静态值
+    let vocab = player_stats::vocab_from_ability(conn, &next)?;
+    player_stats::set_vocab_estimate(conn, vocab)
+}
+
 /// 在单一事务中落库作答结果。
 pub fn commit(conn: &mut Connection, dto: &ReviewCommitDto) -> Result<(), String> {
     validate(dto)?;
 
     let now = clock::now();
     let previous = word_states::get(conn, dto.word_id)?;
+    let counts = counts_toward_ability(previous.as_ref(), dto);
     let mastered_at = resolve_mastered_at(previous.as_ref(), &dto.app_state, &now);
 
     let tx = conn
@@ -184,6 +225,12 @@ pub fn commit(conn: &mut Connection, dto: &ReviewCommitDto) -> Result<(), String
             mastered_at,
         },
     )?;
+
+    // 能力估计与作答同一事务：估计更新了但作答没落库（或反之），
+    // 会让 θ 与实际观测数对不上，而这种不一致没有任何东西会报错
+    if counts {
+        update_ability(&tx, dto.word_id, dto.is_correct)?;
+    }
 
     // 会话进度随每题递增，而非等到会话结束才写。
     // 决议 S13 后单场约 4 分钟，中途退出是常态——已作答的部分必须留存。
@@ -260,6 +307,128 @@ mod tests {
             question_level: 2,
             reinforce_streak: 0,
         }
+    }
+
+    /// 带词频排名的词。默认夹具的排名是 None（能力更新会跳过），
+    /// 测能力估计必须用有排名的词
+    fn setup_ranked(rank: i64) -> Connection {
+        let mut conn = setup();
+        conn.execute("UPDATE words SET frequency_rank = ?1 WHERE id = 1", [rank])
+            .unwrap();
+        conn
+    }
+
+    // ── 能力估计 ──────────────────────────
+
+    #[test]
+    fn 首见作答更新能力估计() {
+        let mut conn = setup_ranked(3000);
+        let before = player_stats::ability(&conn).unwrap();
+        assert_eq!(before.observations, 0, "初始应为先验");
+
+        commit(&mut conn, &dto()).unwrap();
+
+        let after = player_stats::ability(&conn).unwrap();
+        assert_eq!(after.observations, 1);
+        assert!(after.theta > before.theta, "首见答对应提升估计");
+        assert!(after.information > before.information);
+    }
+
+    #[test]
+    fn 复习不更新能力估计() {
+        let mut conn = setup_ranked(3000);
+        commit(&mut conn, &dto()).unwrap();
+        let after_first = player_stats::ability(&conn).unwrap();
+
+        // 第二次作答：reps 已经是 1，这是复习不是首见
+        let mut second = dto();
+        second.after.reps = 2;
+        commit(&mut conn, &second).unwrap();
+
+        let after_second = player_stats::ability(&conn).unwrap();
+        // 第五次复习答对说明「应用把它教会了」，不是「本来就会」。
+        // 拿复习结果更新会让估计随训练虚高，然后开始跳过没教过的词
+        assert_eq!(after_second, after_first, "复习不该改变能力估计");
+    }
+
+    #[test]
+    fn 拼写题不更新能力估计() {
+        let mut conn = setup_ranked(3000);
+        let before = player_stats::ability(&conn).unwrap();
+
+        let mut spelling = dto();
+        spelling.question_type = 5; // 全拼写，没有选项
+        commit(&mut conn, &spelling).unwrap();
+
+        // 模型里的猜对率是按四选一定的。拼写题套同一个模型，
+        // 会把「拼不出来」当成「词汇量不足」的证据
+        assert_eq!(player_stats::ability(&conn).unwrap(), before);
+    }
+
+    #[test]
+    fn 没有词频排名的词不更新能力估计() {
+        let mut conn = setup(); // 默认夹具 frequency_rank = None
+        let before = player_stats::ability(&conn).unwrap();
+
+        commit(&mut conn, &dto()).unwrap();
+
+        // 18 个连字符复合词两个语料库都没收录。编一个难度
+        // 会让模型把凭空捏造的数字当成证据
+        assert_eq!(player_stats::ability(&conn).unwrap(), before);
+        // 但作答本身要照常落库
+        assert!(word_states::get(&conn, 1).unwrap().is_some());
+    }
+
+    #[test]
+    fn 答错降低能力估计() {
+        let mut conn = setup_ranked(3000);
+        let before = player_stats::ability(&conn).unwrap();
+
+        let mut wrong = dto();
+        wrong.is_correct = false;
+        wrong.rating = 1;
+        commit(&mut conn, &wrong).unwrap();
+
+        assert!(player_stats::ability(&conn).unwrap().theta < before.theta);
+    }
+
+    #[test]
+    fn 词汇量跟着能力走而不是停在摸底那一刻() {
+        let mut conn = setup_ranked(3000);
+        // 再灌几个有排名的词，让词汇量统计有东西可数
+        conn.execute(
+            "INSERT INTO words (word, phonetic, pos, meaning, example_1, example_2,
+                                level, frequency_band, frequency_rank, zone, source_edition, created_at)
+             SELECT 'w'||v, '/w/', 'n.', '释义', 'A w appears.', '', 'senior', 1, v*40, 'newbie', '', ?1
+             FROM (WITH RECURSIVE c(v) AS (SELECT 1 UNION ALL SELECT v+1 FROM c WHERE v<100) SELECT v FROM c)",
+            [clock::now()],
+        )
+        .unwrap();
+
+        commit(&mut conn, &dto()).unwrap();
+
+        let vocab: i64 = conn
+            .query_row("SELECT vocab_estimate FROM player_stats WHERE id = 1", [], |r| r.get(0))
+            .unwrap();
+        let a = player_stats::ability(&conn).unwrap();
+        let expected = player_stats::vocab_from_ability(&conn, &a).unwrap();
+        assert_eq!(vocab, expected, "词汇量应由能力推算");
+        assert!(vocab > 0, "推算结果不该是 0");
+    }
+
+    #[test]
+    fn 作答校验失败时能力估计不变() {
+        let mut conn = setup_ranked(3000);
+        let before = player_stats::ability(&conn).unwrap();
+
+        let mut bad = dto();
+        bad.after.due_at = "不是时间戳".into();
+        assert!(commit(&mut conn, &bad).is_err());
+
+        // 估计更新了但作答没落库，会让 θ 与实际观测数对不上，
+        // 而这种不一致没有任何东西会报错
+        assert_eq!(player_stats::ability(&conn).unwrap(), before);
+        assert!(word_states::get(&conn, 1).unwrap().is_none());
     }
 
     // ── 正常路径 ──────────────────────────

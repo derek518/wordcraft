@@ -244,6 +244,11 @@ const HANDLERS: Record<string, (args?: Record<string, unknown>) => unknown> = {
     { value: 'all', label: '全部', words: 5278 },
   ],
 
+  reset_learning_data_cmd: () => ({
+    cleared: [['review_logs', 409], ['word_states', 1603], ['sessions', 25]],
+    total_rows: 2037,
+  }),
+
   search_words: () => [],
   play_word_audio: () => null,
   postpone_session: () => ({ remaining: 2 }),

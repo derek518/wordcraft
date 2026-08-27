@@ -16,6 +16,7 @@ mod platform;
 mod progression;
 mod queue;
 mod report;
+mod reset;
 mod review;
 mod scope;
 mod scheduler;
@@ -123,6 +124,7 @@ fn main() {
             commands::config::get_setting,
             commands::config::get_study_levels,
             commands::config::get_pace,
+            reset::reset_learning_data_cmd,
             commands::config::set_setting,
             // 平台能力
             tts::play_word_audio,

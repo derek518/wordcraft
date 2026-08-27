@@ -277,6 +277,36 @@ get_heatmap(days: i64) -> Result<Vec<HeatmapCell>, String>
 export_data_json() -> Result<String, String>                       // spec F7 导出
 ```
 
+### 3.7 数据重置
+
+```rust
+/// 清空全部学习与游戏进度，恢复成「全新一台」。
+///
+/// 返回清空明细而非 `Ok(())`——操作不可逆，「点了没反应」和「清干净了」
+/// 在界面上必须能区分。
+reset_learning_data_cmd() -> Result<ResetSummary, String>
+
+pub struct ResetSummary {
+    pub cleared: Vec<(String, i64)>,   // 表名 → 清空行数，仅含非空表
+    pub total_rows: i64,
+}
+```
+
+**边界**（`src-tauri/src/reset.rs`）：
+
+| | 内容 |
+|---|---|
+| 清空 | `review_logs` `sessions` `homestead_grid` `homestead_residents` `card_collection` `block_grants` `word_states` `placement_asked` `placement_results` `daily_records` `season_settlements`；`player_stats` 删除后按 schema 默认值重建 |
+| 计数归零 | `block_inventory` 的 `owned`/`placed`——那三行是**结构种子**（三种方块类型），删掉会让 `homestead_grid` 的外键无处可指 |
+| 保留 | `words` `cards`，以及全部家长配置 |
+| 复位 | `onboarding_done`→`false`、`placement_stage`→`0`、`daily_pause_date`、`season_milestone_seen`→`0`、`postpone_until`、`postpone_session_type` |
+
+**为什么连游戏进度一起清**：等级、方块、卡牌与作答记录互相引用，只清一半会留下
+「魔王已讨伐但那个词又变回生词」这类自相矛盾的状态。而且早期的升级与解锁本身
+就是动机设计的一部分，让孩子从 Lv.11 起步等于把这段体验删掉。
+
+单事务执行，提交前跑 `pragma_foreign_key_check`，有悬空引用则回滚。
+
 ### 3.5 系统集成（平台抽象，ADR-3）
 
 ```rust

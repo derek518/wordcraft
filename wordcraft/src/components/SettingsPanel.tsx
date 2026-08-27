@@ -37,6 +37,10 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
   const [error, setError] = useState('')
   const [saved, setSaved] = useState('')
   const [exporting, setExporting] = useState(false)
+  /** 重置需二次确认。不可逆的操作不该一键完成 */
+  const [resetArmed, setResetArmed] = useState(false)
+  const [resetting, setResetting] = useState(false)
+  const [resetDone, setResetDone] = useState<api.ResetSummary | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -163,6 +167,22 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       void load()
+    }
+  }
+
+  const resetData = async () => {
+    setError('')
+    setResetting(true)
+    try {
+      const summary = await api.resetLearningData()
+      setResetDone(summary)
+      setResetArmed(false)
+      // 等级、生词数、摸底状态全变了,界面必须跟着后端重新拉一遍
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setResetting(false)
     }
   }
 
@@ -434,6 +454,47 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
           >
             {exporting ? '正在导出…' : '导出 JSON'}
           </button>
+        </div>
+
+        <div className="py-4 border-t border-wc-danger/25">
+          <div className="font-medium font-game text-wc-danger mb-1">交给孩子前：清空试用数据</div>
+          <p className="text-xs text-wc-text-muted mb-3 leading-relaxed">
+            装好后自己点着试的那些作答会进入记忆算法。成年人的正确率与反应速度会把
+            上百个词判成「已掌握」，孩子接手后这些词一个月内都不会再出现——而这个
+            判断来自另一个人。<strong className="text-wc-danger">清空后无法恢复</strong>
+            ：作答记录、等级、方块、卡牌收藏全部归零，词库与上面的配置保留。
+          </p>
+          {resetDone ? (
+            <div className="text-xs font-game-mono text-wc-success">
+              已清空 {resetDone.total_rows} 行
+              {resetDone.cleared.length > 0 &&
+                `（${resetDone.cleared.map(([t, n]) => `${t} ${n}`).join('、')}）`}
+            </div>
+          ) : resetArmed ? (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => void resetData()}
+                disabled={resetting}
+                className="px-4 py-2 rounded-xl border border-wc-danger bg-wc-danger/15 text-wc-danger text-sm hover:bg-wc-danger/25 transition disabled:opacity-40"
+              >
+                {resetting ? '正在清空…' : '确认清空，不可恢复'}
+              </button>
+              <button
+                onClick={() => setResetArmed(false)}
+                disabled={resetting}
+                className="px-4 py-2 rounded-xl border border-wc-border bg-wc-surface-2 text-sm hover:border-wc-primary/50 transition disabled:opacity-40"
+              >
+                取消
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setResetArmed(true)}
+              className="px-4 py-2 rounded-xl border border-wc-danger/50 bg-wc-surface-2 text-wc-danger text-sm hover:bg-wc-danger/10 transition"
+            >
+              清空学习数据
+            </button>
+          )}
         </div>
       </div>
     </div>

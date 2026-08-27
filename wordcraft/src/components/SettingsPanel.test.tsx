@@ -37,6 +37,10 @@ function stub() {
   vi.spyOn(api, 'getSetting').mockImplementation(async (k) => VALUES[k] ?? null)
   vi.spyOn(api, 'setAutostart').mockResolvedValue(undefined)
   vi.spyOn(api, 'exportDataJson').mockResolvedValue('{}')
+  vi.spyOn(api, 'resetLearningData').mockResolvedValue({
+    cleared: [['review_logs', 409], ['word_states', 1603]],
+    total_rows: 2012,
+  })
   return vi.spyOn(api, 'setSetting').mockResolvedValue(undefined)
 }
 
@@ -347,6 +351,99 @@ describe('设置面板', () => {
     // 丢掉待提交的写入，等于用户白调了一次
     expect(set).toHaveBeenCalledWith('daily_new_words', '26')
     vi.useRealTimers()
+  })
+
+  describe('清空学习数据', () => {
+    it('第一次点击只进入确认态，不动数据', async () => {
+      stub()
+      const reset = vi.spyOn(api, 'resetLearningData')
+      render(<SettingsPanel onBack={() => {}} />)
+      await settle()
+
+      await act(async () => {
+        btn('清空学习数据')!.click()
+      })
+      await settle()
+
+      // 不可逆的操作一键完成，误触一次就没了
+      expect(reset).not.toHaveBeenCalled()
+      expect(text()).toContain('确认清空')
+    })
+
+    it('取消后回到未确认态', async () => {
+      stub()
+      const reset = vi.spyOn(api, 'resetLearningData')
+      render(<SettingsPanel onBack={() => {}} />)
+      await settle()
+
+      await act(async () => {
+        btn('清空学习数据')!.click()
+      })
+      await act(async () => {
+        btn('取消')!.click()
+      })
+      await settle()
+
+      expect(reset).not.toHaveBeenCalled()
+      expect(text()).not.toContain('确认清空')
+    })
+
+    it('确认后清空并显示清了多少行', async () => {
+      stub()
+      const reset = vi.spyOn(api, 'resetLearningData')
+      render(<SettingsPanel onBack={() => {}} />)
+      await settle()
+
+      await act(async () => {
+        btn('清空学习数据')!.click()
+      })
+      await act(async () => {
+        btn('确认清空')!.click()
+      })
+      await settle()
+
+      expect(reset).toHaveBeenCalled()
+      // 「点了没反应」和「清干净了」在界面上必须能区分
+      expect(text()).toContain('2012')
+      expect(text()).toContain('review_logs 409')
+    })
+
+    it('清空后重新拉一遍设置，界面不停留在旧数据', async () => {
+      stub()
+      const stats = vi.spyOn(api, 'getOverallStats').mockResolvedValue(STATS)
+      render(<SettingsPanel onBack={() => {}} />)
+      await settle()
+      const before = stats.mock.calls.length
+
+      await act(async () => {
+        btn('清空学习数据')!.click()
+      })
+      await act(async () => {
+        btn('确认清空')!.click()
+      })
+      await settle()
+
+      // 等级、生词数、摸底状态全变了，还显示旧值等于说谎
+      expect(stats.mock.calls.length).toBeGreaterThan(before)
+    })
+
+    it('清空失败显示原因，不谎报成功', async () => {
+      stub()
+      vi.spyOn(api, 'resetLearningData').mockRejectedValue(new Error('数据库被占用'))
+      render(<SettingsPanel onBack={() => {}} />)
+      await settle()
+
+      await act(async () => {
+        btn('清空学习数据')!.click()
+      })
+      await act(async () => {
+        btn('确认清空')!.click()
+      })
+      await settle()
+
+      expect(screen.getByText(/数据库被占用/)).toBeTruthy()
+      expect(text()).not.toContain('已清空')
+    })
   })
 
   it('导出按钮真正请求后端，失败时显示原因', async () => {

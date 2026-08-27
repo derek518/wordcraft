@@ -410,6 +410,20 @@ export const getSetting = (key: string) => call<string | null>('get_setting', { 
 export const setSetting = (key: string, value: string) =>
   call<void>('set_setting', { key, value })
 
+export interface ResetSummary {
+  /** 被清空的表及行数 */
+  cleared: [string, number][]
+  total_rows: number
+}
+
+/**
+ * 清空全部学习与游戏进度，保留词库与家长配置。
+ *
+ * 返回清空明细而非 void：这个操作不可逆，「点了没反应」和「清干净了」
+ * 在界面上必须能区分。
+ */
+export const resetLearningData = () => call<ResetSummary>('reset_learning_data_cmd')
+
 export const setAutostart = (enabled: boolean) =>
   call<void>('set_autostart', { enabled })
 
